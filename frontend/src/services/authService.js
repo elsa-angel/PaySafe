@@ -20,4 +20,17 @@ export const authService = {
   logout: () => apiRequest('/api/auth/logout/', { method: 'POST' }),
 
   currentUser: () => apiRequest('/api/auth/user/'),
+
+  updateProfile: ({ fullName }) =>
+    apiRequest('/api/auth/user/', { method: 'PATCH', body: { full_name: fullName } }),
+
+  changePassword: ({ currentPassword, newPassword, confirmNewPassword }) =>
+    apiRequest('/api/auth/change-password/', {
+      method: 'POST',
+      body: {
+        current_password: currentPassword,
+        new_password: newPassword,
+        confirm_new_password: confirmNewPassword,
+      },
+    }),
 }
