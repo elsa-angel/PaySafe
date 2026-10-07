@@ -40,3 +40,21 @@ export const ActivityIcon = (props) => (
 export const LogoutIcon = (props) => (
   <svg {...base} {...props}><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h3" /><path d="M16 8l4 4-4 4M20 12H9" /></svg>
 )
+export const SendIcon = (props) => (
+  <svg {...base} {...props}><path d="M21 3 10 14" /><path d="m21 3-7 18-4-7-7-4 18-7Z" /></svg>
+)
+export const ListIcon = (props) => (
+  <svg {...base} {...props}><path d="M9 6h11M9 12h11M9 18h11" /><circle cx="4.5" cy="6" r="1" /><circle cx="4.5" cy="12" r="1" /><circle cx="4.5" cy="18" r="1" /></svg>
+)
+export const ChevronDownIcon = (props) => (
+  <svg {...base} {...props}><path d="m6 9 6 6 6-6" /></svg>
+)
+export const ArrowRightIcon = (props) => (
+  <svg {...base} {...props}><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+)
+export const ArrowLeftIcon = (props) => (
+  <svg {...base} {...props}><path d="M19 12H5M11 6l-6 6 6 6" /></svg>
+)
+export const ClockIcon = (props) => (
+  <svg {...base} {...props}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+)

@@ -1,4 +1,4 @@
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.db import IntegrityError
 from django.middleware.csrf import get_token
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -9,7 +9,13 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.throttling import SimpleRateThrottle
 
-from .serializers import LoginSerializer, SignupSerializer, UserSerializer
+from .serializers import (
+    ChangePasswordSerializer,
+    LoginSerializer,
+    ProfileUpdateSerializer,
+    SignupSerializer,
+    UserSerializer,
+)
 
 INVALID_CREDENTIALS = 'Invalid email or password.'
 
@@ -33,6 +39,15 @@ class LoginThrottle(IpRateThrottle):
 
 class SignupThrottle(IpRateThrottle):
     scope = 'signup'
+
+
+class ChangePasswordThrottle(SimpleRateThrottle):
+    """Limits current-password guessing per authenticated user."""
+
+    scope = 'change_password'
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {'scope': self.scope, 'ident': request.user.pk}
 
 
 @ensure_csrf_cookie
@@ -86,6 +101,22 @@ def logout_view(request):
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-@api_view(['GET'])
+@api_view(['GET', 'PATCH'])
 def current_user(request):
+    """GET returns the signed-in user; PATCH updates their own full name."""
+    if request.method == 'PATCH':
+        serializer = ProfileUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.update(request.user, serializer.validated_data)
     return Response(UserSerializer(request.user).data)
+
+
+@api_view(['POST'])
+@throttle_classes([ChangePasswordThrottle])
+def change_password(request):
+    serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
+    serializer.is_valid(raise_exception=True)
+    user = serializer.save()
+    # Keep the current session valid (Django otherwise invalidates it on password change).
+    update_session_auth_hash(request, user)
+    return Response({'detail': 'Your password has been updated.'})

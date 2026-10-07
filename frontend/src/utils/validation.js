@@ -40,6 +40,10 @@ export function validateConfirmPassword(password, confirmPassword) {
   return ''
 }
 
+export function validateCurrentPassword(password) {
+  return password ? '' : 'Enter your current password.'
+}
+
 export function validateLoginPassword(password) {
   return password ? '' : 'Password is required.'
 }

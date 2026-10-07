@@ -40,9 +40,17 @@ export default function AuthProvider({ children }) {
     }
   }, [])
 
+  // Saves the profile in Django, then updates the shared user state so the
+  // new name shows everywhere immediately.
+  const updateProfile = useCallback(async (profile) => {
+    const updatedUser = await authService.updateProfile(profile)
+    setUser(updatedUser)
+    return updatedUser
+  }, [])
+
   const value = useMemo(
-    () => ({ user, isAuthenticated: Boolean(user), isLoading, login, logout }),
-    [user, isLoading, login, logout],
+    () => ({ user, isAuthenticated: Boolean(user), isLoading, login, logout, updateProfile }),
+    [user, isLoading, login, logout, updateProfile],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

@@ -75,3 +75,54 @@ class LoginSerializer(serializers.Serializer):
 
     def validate_email(self, value):
         return normalize_email(value)
+
+
+class ProfileUpdateSerializer(serializers.Serializer):
+    """Editable profile fields. Email is deliberately not editable."""
+
+    full_name = serializers.CharField(max_length=FULL_NAME_MAX_LENGTH, trim_whitespace=True)
+
+    def validate_full_name(self, value):
+        value = ' '.join(value.split())
+        if len(value) < 2:
+            raise serializers.ValidationError('Please enter your full name.')
+        return value
+
+    def update(self, instance, validated_data):
+        instance.first_name = validated_data['full_name']
+        instance.save(update_fields=['first_name'])
+        return instance
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=128)
+    new_password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=128)
+    confirm_new_password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=128)
+
+    def validate_current_password(self, value):
+        user = self.context['request'].user
+        if not user.check_password(value):
+            raise serializers.ValidationError('Your current password is incorrect.')
+        return value
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['confirm_new_password']:
+            raise serializers.ValidationError(
+                {'confirm_new_password': ['Passwords do not match.']}
+            )
+        if attrs['new_password'] == attrs['current_password']:
+            raise serializers.ValidationError(
+                {'new_password': ['Your new password must be different from the current one.']}
+            )
+        user = self.context['request'].user
+        try:
+            validate_password(attrs['new_password'], user=user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'new_password': list(exc.messages)})
+        return attrs
+
+    def save(self, **kwargs):
+        user = self.context['request'].user
+        user.set_password(self.validated_data['new_password'])  # hashed by Django
+        user.save(update_fields=['password'])
+        return user

@@ -114,3 +114,114 @@ class AuthApiTests(APITestCase):
         for _ in range(10):
             self.post('/api/auth/login/', {'email': 'a@b.com', 'password': 'x'})
         self.assertEqual(self.post('/api/auth/login/', {'email': 'a@b.com', 'password': 'x'}).status_code, 429)
+
+
+class ProfileApiTests(APITestCase):
+    NEW_PASSWORD = 'An0ther-Str0ng-Pass!'
+
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient(enforce_csrf_checks=True)
+        self.client.get('/api/auth/csrf/')
+        self.csrf = self.client.cookies['csrftoken'].value
+        self.user = User.objects.create_user(
+            username='asha@example.com', email='asha@example.com',
+            password=VALID['password'], first_name='Asha Menon',
+        )
+
+    def sign_in(self):
+        res = self.client.post(
+            '/api/auth/login/', {'email': 'asha@example.com', 'password': VALID['password']},
+            format='json', HTTP_X_CSRFTOKEN=self.csrf,
+        )
+        self.assertEqual(res.status_code, 200)
+        self.csrf = self.client.cookies['csrftoken'].value
+
+    def send(self, method, url, data):
+        return getattr(self.client, method)(url, data, format='json', HTTP_X_CSRFTOKEN=self.csrf)
+
+    def change(self, **overrides):
+        body = {
+            'current_password': VALID['password'],
+            'new_password': self.NEW_PASSWORD,
+            'confirm_new_password': self.NEW_PASSWORD,
+            **overrides,
+        }
+        return self.send('post', '/api/auth/change-password/', body)
+
+    # --- profile ---
+    def test_profile_update_requires_authentication(self):
+        res = self.send('patch', '/api/auth/user/', {'full_name': 'Hacker'})
+        self.assertIn(res.status_code, (401, 403))
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.first_name, 'Asha Menon')
+
+    def test_profile_update_changes_name_only(self):
+        self.sign_in()
+        res = self.send('patch', '/api/auth/user/', {
+            'full_name': '  Asha   Menon Nair ', 'email': 'evil@example.com', 'is_staff': True,
+        })
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['full_name'], 'Asha Menon Nair')
+        self.assertNotIn('password', res.data)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.first_name, 'Asha Menon Nair')
+        self.assertEqual(self.user.email, 'asha@example.com')
+        self.assertFalse(self.user.is_staff)
+
+    def test_profile_update_validation(self):
+        self.sign_in()
+        for name in ('', ' ', 'A', 'x' * 151):
+            res = self.send('patch', '/api/auth/user/', {'full_name': name})
+            self.assertEqual(res.status_code, 400, repr(name))
+            self.assertIn('full_name', res.data)
+
+    # --- change password ---
+    def test_change_password_requires_authentication(self):
+        res = self.change()
+        self.assertIn(res.status_code, (401, 403))
+
+    def test_change_password_success_keeps_session(self):
+        self.sign_in()
+        res = self.change()
+        self.assertEqual(res.status_code, 200)
+        self.assertNotIn('password', str(res.data).lower().replace('your password has been updated', ''))
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password(self.NEW_PASSWORD))
+        self.assertFalse(self.user.check_password(VALID['password']))
+        self.assertTrue(self.user.password.startswith('pbkdf2_'))
+        self.assertEqual(self.client.get('/api/auth/user/').status_code, 200)
+
+    def test_change_password_wrong_current_rejected(self):
+        self.sign_in()
+        res = self.change(current_password='totally-wrong-1')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('current_password', res.data)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password(VALID['password']))
+
+    def test_change_password_mismatch_and_weak_and_same(self):
+        self.sign_in()
+        self.assertIn('confirm_new_password', self.change(confirm_new_password='nope').data)
+        self.assertIn('new_password', self.change(new_password='123', confirm_new_password='123').data)
+        same = self.change(new_password=VALID['password'], confirm_new_password=VALID['password'])
+        self.assertIn('new_password', same.data)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password(VALID['password']))
+
+    def test_change_password_required_fields(self):
+        self.sign_in()
+        res = self.send('post', '/api/auth/change-password/', {})
+        self.assertEqual(res.status_code, 400)
+        for field in ('current_password', 'new_password', 'confirm_new_password'):
+            self.assertIn(field, res.data)
+
+    def test_new_password_works_for_login_old_does_not(self):
+        self.sign_in()
+        self.change()
+        self.send('post', '/api/auth/logout/', {})
+        self.csrf = self.client.cookies['csrftoken'].value
+        old = self.send('post', '/api/auth/login/', {'email': 'asha@example.com', 'password': VALID['password']})
+        self.assertEqual(old.status_code, 401)
+        new = self.send('post', '/api/auth/login/', {'email': 'asha@example.com', 'password': self.NEW_PASSWORD})
+        self.assertEqual(new.status_code, 200)
