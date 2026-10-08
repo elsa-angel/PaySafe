@@ -58,3 +58,21 @@ export const ArrowLeftIcon = (props) => (
 export const ClockIcon = (props) => (
   <svg {...base} {...props}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
 )
+export const CardIcon = (props) => (
+  <svg {...base} {...props}><rect x="3" y="5" width="18" height="14" rx="3" /><path d="M3 10h18M7 15h4" /></svg>
+)
+export const UpiIcon = (props) => (
+  <svg {...base} {...props}><circle cx="12" cy="12" r="4" /><path d="M16 12v1.5a2.5 2.5 0 0 0 5 0V12a9 9 0 1 0-3.5 7.1" /></svg>
+)
+export const BankIcon = (props) => (
+  <svg {...base} {...props}><path d="m3 9 9-5 9 5H3ZM5 9v8M9.7 9v8M14.3 9v8M19 9v8M3 20h18" /></svg>
+)
+export const WalletIcon = (props) => (
+  <svg {...base} {...props}><path d="M19 8V6a2 2 0 0 0-2-2H6a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h13a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2H6" /><circle cx="16.5" cy="13.5" r="1" /></svg>
+)
+export const NoteIcon = (props) => (
+  <svg {...base} {...props}><path d="M6 3h9l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" /><path d="M14 3v5h5M8.5 13h7M8.5 17h5" /></svg>
+)
+export const ReceiptIcon = (props) => (
+  <svg {...base} {...props}><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z" /><path d="M9 8h6M9 12h6" /></svg>
+)

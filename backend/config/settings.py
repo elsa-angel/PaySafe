@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import os
 from pathlib import Path
 
+from corsheaders.defaults import default_headers
 from django.core.management.utils import get_random_secret_key
 from dotenv import load_dotenv
 
@@ -52,6 +53,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'accounts',
+    'payments',
 ]
 
 MIDDLEWARE = [
@@ -158,6 +160,7 @@ REST_FRAMEWORK = {
         'login': '10/min',
         'signup': '10/hour',
         'change_password': '10/hour',
+        'payment': '30/min',
     },
 }
 
@@ -171,6 +174,7 @@ CSRF_TRUSTED_ORIGINS = FRONTEND_ORIGINS
 
 CORS_ALLOWED_ORIGINS = FRONTEND_ORIGINS
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = (*default_headers, 'idempotency-key')
 
 if not DEBUG:
     SESSION_COOKIE_SECURE = True
