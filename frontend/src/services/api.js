@@ -41,8 +41,8 @@ export async function ensureCsrfCookie() {
   await send('/api/auth/csrf/', { method: 'GET' })
 }
 
-export async function apiRequest(path, { method = 'GET', body } = {}) {
-  const headers = { Accept: 'application/json' }
+export async function apiRequest(path, { method = 'GET', body, headers: extraHeaders } = {}) {
+  const headers = { Accept: 'application/json', ...extraHeaders }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
 
   if (!SAFE_METHODS.includes(method)) {

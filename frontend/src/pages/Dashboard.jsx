@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import AppShell from '../components/AppShell'
 import { ArrowRightIcon, ListIcon, SendIcon } from '../components/Icons'
+import RecentTransactions from '../components/RecentTransactions'
 import { useAuth } from '../context/useAuth'
 
 const ACTIONS = [
@@ -38,6 +39,7 @@ export default function Dashboard() {
           </Link>
         ))}
       </div>
+      <RecentTransactions />
     </AppShell>
   )
 }
