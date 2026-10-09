@@ -1,5 +1,6 @@
 import { AlertIcon, CheckIcon } from './Icons'
 
+/** variant: 'error' (default), 'success' or 'info'. */
 export default function Alert({ variant = 'error', children }) {
   if (!children) return null
   const Icon = variant === 'success' ? CheckIcon : AlertIcon

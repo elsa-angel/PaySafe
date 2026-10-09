@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'accounts',
     'payments',
+    'adminpanel',
 ]
 
 MIDDLEWARE = [
@@ -179,3 +180,6 @@ CORS_ALLOW_HEADERS = (*default_headers, 'idempotency-key')
 if not DEBUG:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+
+# Sign in with email (or username) for every account, including superusers.
+AUTHENTICATION_BACKENDS = ['accounts.backends.EmailOrUsernameBackend']

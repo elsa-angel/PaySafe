@@ -76,3 +76,9 @@ export const NoteIcon = (props) => (
 export const ReceiptIcon = (props) => (
   <svg {...base} {...props}><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z" /><path d="M9 8h6M9 12h6" /></svg>
 )
+export const SearchIcon = (props) => (
+  <svg {...base} {...props}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+)
+export const DownloadIcon = (props) => (
+  <svg {...base} {...props}><path d="M12 4v11M7 11l5 5 5-5M5 20h14" /></svg>
+)

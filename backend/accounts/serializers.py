@@ -15,12 +15,21 @@ def normalize_email(value):
 class UserSerializer(serializers.ModelSerializer):
     """Public representation of a user. Never exposes the password hash."""
 
-    full_name = serializers.CharField(source='first_name', read_only=True)
+    full_name = serializers.SerializerMethodField()
+    role = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ('id', 'full_name', 'email', 'date_joined', 'last_login', 'is_active')
+        fields = ('id', 'full_name', 'email', 'role', 'date_joined', 'last_login', 'is_active')
         read_only_fields = fields
+
+    def get_full_name(self, user):
+        # Accounts made with createsuperuser may have no first name.
+        return user.first_name or user.email.split('@')[0] or user.username
+
+    def get_role(self, user):
+        """Derived from Django's superuser flag on the server; never from the client."""
+        return 'admin' if user.is_superuser else 'user'
 
 
 class SignupSerializer(serializers.Serializer):

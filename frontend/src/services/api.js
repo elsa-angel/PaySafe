@@ -69,3 +69,15 @@ export async function apiRequest(path, { method = 'GET', body, headers: extraHea
   if (!response.ok) throw new ApiError(response.status, data ?? {})
   return data
 }
+
+/** Downloads a file (e.g. a CSV report) with the session cookie; failures surface as ApiError. */
+export async function apiDownload(path) {
+  const response = await send(path, { method: 'GET' })
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}))
+    throw new ApiError(response.status, data)
+  }
+  const disposition = response.headers.get('Content-Disposition') || ''
+  const filename = disposition.match(/filename="?([^";]+)"?/)?.[1] || 'download'
+  return { blob: await response.blob(), filename }
+}

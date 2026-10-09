@@ -21,4 +21,6 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/auth/', include('accounts.urls')),
     path('api/payments/', include('payments.urls')),
+    # PaySafe's own admin API. Django's built-in admin stays at /admin/.
+    path('api/admin/', include('adminpanel.urls')),
 ]
