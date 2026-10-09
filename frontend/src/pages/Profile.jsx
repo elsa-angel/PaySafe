@@ -5,6 +5,7 @@ import Button from '../components/Button'
 import { LockIcon, MailIcon, ShieldIcon, UserIcon } from '../components/Icons'
 import TextField from '../components/TextField'
 import { useAuth } from '../context/useAuth'
+import { homePathFor } from '../utils/roles'
 import { authService } from '../services/authService'
 import {
   parseApiError,
@@ -245,8 +246,9 @@ function ChangePassword() {
 }
 
 export default function Profile() {
+  const { user } = useAuth()
   return (
-    <AppShell eyebrow="Account" title="Profile" backTo="/">
+    <AppShell eyebrow="Account" title="Profile" backTo={homePathFor(user)}>
       <div className="stack">
         <ProfileDetails />
         <ChangePassword />

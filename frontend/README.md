@@ -1,16 +1,15 @@
-# React + Vite
+# PaySafe frontend (React + Vite + pnpm)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+```bash
+pnpm install        # use pnpm 8 (lockfile v6)
+pnpm dev            # http://localhost:5173 (proxies /api to Django on 127.0.0.1:8000)
+pnpm lint
+pnpm build
+```
 
-Currently, two official plugins are available:
+Regular users and administrators share the same login page. After sign-in the backend-provided `role`
+decides where you land: users go to the dashboard, administrators to `/admin`. Route guards are a
+convenience only; every admin API call is authorised by the server.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+Admin pages live in `src/pages/admin/` and reuse the existing PaySafe components and CSS tokens. Charts are
+small dependency-free SVG components in `src/components/admin/Charts.jsx`.

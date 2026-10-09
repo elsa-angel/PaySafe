@@ -6,6 +6,7 @@ import Button from '../components/Button'
 import { LockIcon, MailIcon } from '../components/Icons'
 import TextField from '../components/TextField'
 import { useAuth } from '../context/useAuth'
+import { resolvePostLoginPath } from '../utils/roles'
 import { parseApiError, validateEmail, validateLoginPassword } from '../utils/validation'
 
 export default function Login() {
@@ -13,7 +14,7 @@ export default function Login() {
   const navigate = useNavigate()
   const location = useLocation()
   const justRegistered = Boolean(location.state?.registered)
-  const redirectTo = location.state?.from?.pathname || '/'
+  const requestedPath = location.state?.from?.pathname
 
   const [values, setValues] = useState({ email: location.state?.email ?? '', password: '' })
   const [errors, setErrors] = useState({})
@@ -50,8 +51,8 @@ export default function Login() {
     setIsSubmitting(true)
     setFormError('')
     try {
-      await login({ email: values.email.trim(), password: values.password })
-      navigate(redirectTo, { replace: true })
+      const user = await login({ email: values.email.trim(), password: values.password })
+      navigate(resolvePostLoginPath(user, requestedPath), { replace: true })
     } catch (error) {
       const parsed = parseApiError(error, { email: 'email', password: 'password' })
       setErrors(parsed.fieldErrors)
