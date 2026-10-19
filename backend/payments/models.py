@@ -48,6 +48,20 @@ class WalletProvider(models.TextChoices):
     OTHER = 'OTHER', 'Other'
 
 
+class UpiProvider(models.TextChoices):
+    GOOGLE_PAY = 'GOOGLE_PAY', 'Google Pay'
+    PHONEPE = 'PHONEPE', 'PhonePe'
+    PAYTM = 'PAYTM', 'Paytm'
+    BHIM = 'BHIM', 'BHIM'
+    AMAZON_PAY = 'AMAZON_PAY', 'Amazon Pay'
+    OTHER = 'OTHER', 'Other'
+
+
+class WalletIdentifierType(models.TextChoices):
+    MOBILE = 'MOBILE', 'Mobile number'
+    WALLET_ID = 'WALLET_ID', 'Wallet ID'
+
+
 class TransactionStatus(models.TextChoices):
     PENDING = 'PENDING', 'Pending'
     COMPLETED = 'COMPLETED', 'Completed'
@@ -111,6 +125,13 @@ class Transaction(models.Model):
     upi_id = models.CharField(max_length=100, blank=True)
     bank_name = models.CharField(max_length=20, choices=Bank.choices, blank=True)
     wallet_provider = models.CharField(max_length=20, choices=WalletProvider.choices, blank=True)
+    upi_provider = models.CharField(max_length=20, choices=UpiProvider.choices, blank=True)
+    ifsc_code = models.CharField(max_length=11, blank=True)  # public branch code, not an account number
+    wallet_identifier_type = models.CharField(max_length=12, choices=WalletIdentifierType.choices, blank=True)
+    # Display-only masked value ("**** 4242" for a card or bank account, a masked wallet
+    # mobile/ID). Full card numbers, CVVs, expiry dates and account numbers are validated
+    # and then discarded; they are never stored.
+    masked_reference = models.CharField(max_length=32, blank=True)
 
     # --- location (optional; null when permission denied/unavailable) ---
     latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
@@ -191,10 +212,18 @@ class Transaction(models.Model):
 
     @property
     def payment_method_detail(self):
-        """Human-readable method detail, e.g. 'Visa', 'name@upi', 'HDFC Bank'."""
-        return {
-            PaymentMethod.CARD: self.get_card_network_display,
-            PaymentMethod.UPI: lambda: self.upi_id,
-            PaymentMethod.BANK_TRANSFER: self.get_bank_name_display,
-            PaymentMethod.WALLET: self.get_wallet_provider_display,
-        }[self.payment_method]()
+        """Human-readable, non-sensitive method detail, e.g. 'Visa · **** 4242'.
+
+        Older records have no masked reference or provider, so they fall back to
+        the original single value (e.g. just 'Visa').
+        """
+        method = self.payment_method
+        if method == PaymentMethod.CARD:
+            parts = [self.get_card_network_display(), self.masked_reference]
+        elif method == PaymentMethod.UPI:
+            parts = [self.upi_id, self.get_upi_provider_display()]
+        elif method == PaymentMethod.BANK_TRANSFER:
+            parts = [self.get_bank_name_display(), self.masked_reference, f'IFSC {self.ifsc_code}' if self.ifsc_code else '']
+        else:
+            parts = [self.get_wallet_provider_display(), self.masked_reference]
+        return ' · '.join(part for part in parts if part)

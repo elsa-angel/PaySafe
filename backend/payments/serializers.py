@@ -1,27 +1,14 @@
 import re
 from decimal import Decimal
 
+from django.utils import timezone
+from django.views.decorators.debug import sensitive_variables
 from rest_framework import serializers
 
-from .models import (
-    Bank,
-    CardNetwork,
-    PaymentMethod,
-    Transaction,
-    WalletProvider,
-)
+from .models import PaymentMethod, Transaction
+from .validators import validate_method_details
 
-UPI_ID_PATTERN = re.compile(r'^[A-Za-z0-9._-]{2,64}@[A-Za-z][A-Za-z0-9]{1,31}$')
 DESCRIPTION_MAX_LENGTH = Transaction._meta.get_field('description').max_length
-
-# payment method -> (serializer field holding its detail, model choices or None, label)
-METHOD_DETAIL_FIELDS = {
-    PaymentMethod.CARD: ('card_network', CardNetwork, 'card type'),
-    PaymentMethod.UPI: ('upi_id', None, 'UPI ID'),
-    PaymentMethod.BANK_TRANSFER: ('bank_name', Bank, 'bank'),
-    PaymentMethod.WALLET: ('wallet_provider', WalletProvider, 'wallet provider'),
-}
-ALL_DETAIL_FIELDS = [field for field, _, _ in METHOD_DETAIL_FIELDS.values()]
 
 
 PLAIN_DECIMAL_PATTERN = re.compile(r'^-?\d+(\.\d+)?$')
@@ -60,10 +47,23 @@ class PaymentCreateSerializer(serializers.Serializer):
         choices=PaymentMethod.choices,
         error_messages={'invalid_choice': 'Choose a valid payment method.', 'required': 'Choose a payment method.'},
     )
+    # Method-specific input. Raw sensitive values (card number, CVV, expiry, account
+    # numbers) are validated in validate() and never leave it.
     card_network = serializers.CharField(required=False, allow_blank=True, max_length=20)
+    cardholder_name = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    card_number = serializers.CharField(required=False, allow_blank=True, max_length=32)
+    card_expiry = serializers.CharField(required=False, allow_blank=True, max_length=12)
+    card_cvv = serializers.CharField(required=False, allow_blank=True, max_length=8)
+    upi_provider = serializers.CharField(required=False, allow_blank=True, max_length=20)
     upi_id = serializers.CharField(required=False, allow_blank=True, max_length=100)
     bank_name = serializers.CharField(required=False, allow_blank=True, max_length=20)
+    account_holder_name = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    account_number = serializers.CharField(required=False, allow_blank=True, max_length=32)
+    confirm_account_number = serializers.CharField(required=False, allow_blank=True, max_length=32)
+    ifsc_code = serializers.CharField(required=False, allow_blank=True, max_length=20)
     wallet_provider = serializers.CharField(required=False, allow_blank=True, max_length=20)
+    wallet_identifier_type = serializers.CharField(required=False, allow_blank=True, max_length=12)
+    wallet_identifier = serializers.CharField(required=False, allow_blank=True, max_length=80)
     description = serializers.CharField(
         required=False, allow_blank=True, max_length=DESCRIPTION_MAX_LENGTH,
         error_messages={'max_length': f'Note can be at most {DESCRIPTION_MAX_LENGTH} characters.'},
@@ -88,23 +88,20 @@ class PaymentCreateSerializer(serializers.Serializer):
     def validate_description(self, value):
         return ' '.join(value.split())
 
+    @sensitive_variables()  # keep sensitive locals out of error-report tracebacks
     def validate(self, attrs):
-        method = attrs['payment_method']
-        field, choices, label = METHOD_DETAIL_FIELDS[method]
-        value = (attrs.get(field) or '').strip()
-
-        if not value:
-            raise serializers.ValidationError({field: [f'Select or enter the {label}.' if choices else f'Enter the {label}.']})
-        if choices is not None and value not in choices.values:
-            raise serializers.ValidationError({field: [f'Choose a valid {label}.']})
-        if method == PaymentMethod.UPI and not UPI_ID_PATTERN.match(value):
-            raise serializers.ValidationError({field: ['Enter a valid UPI ID, like name@bank.']})
-
-        # Keep only the detail relevant to the chosen method; discard the rest.
-        for other in ALL_DETAIL_FIELDS:
-            attrs[other] = ''
-        attrs[field] = value.lower() if method == PaymentMethod.UPI else value
-        return attrs
+        stored, errors = validate_method_details(attrs['payment_method'], attrs, timezone.now().date())
+        if errors:
+            raise serializers.ValidationError({field: [message] for field, message in errors.items()})
+        # Return only what may be stored. Raw card/account details are dropped here.
+        return {
+            'amount': attrs['amount'],
+            'payment_method': attrs['payment_method'],
+            'description': attrs.get('description', ''),
+            'recipient_name': attrs['recipient_name'],
+            'recipient_email': attrs['recipient_email'],
+            **stored,
+        }
 
 
 class TransactionListSerializer(serializers.ModelSerializer):

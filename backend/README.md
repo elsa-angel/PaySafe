@@ -34,6 +34,25 @@ Admin endpoints enforce `is_superuser` on the server for every request. Reports 
 in-app preview, or a CSV download with `?export=csv`. Filters: `date_from`, `date_to` (YYYY-MM-DD),
 `status`, `payment_method`, `account_status`, `group_by` (`day|week|month`).
 
+## Payment method details (simulated payments)
+
+No real payment gateway is used and no money moves. The form collects the details below; the API validates
+them and then **discards the sensitive parts**: only the masked or non-sensitive values are stored.
+
+| Method | Collected and validated | Stored |
+|---|---|---|
+| Card | cardholder name, network, card number (length + Luhn), expiry (MM/YY, not expired), CVV (3 digits; 3-4 for "Other") | network, masked `**** 1234` |
+| UPI | UPI app, UPI ID (name@bank) | UPI app, UPI ID |
+| Bank transfer | bank, account holder, account number (9-18 digits) + confirmation, IFSC (format + matches the bank) | bank, IFSC, masked `**** 1234` |
+| Wallet | provider, identifier type (mobile or wallet ID), identifier | provider, identifier type, masked identifier |
+
+Never collected: PINs, passwords, OTPs. Never stored: full card number, CVV, expiry, cardholder or account
+holder name, full account number, full wallet identifier. Logging never includes request bodies, and the
+payment view marks these parameters as sensitive for error reports. Test card: `4111 1111 1111 1111`.
+
+Validation lives in `payments/validators.py`. Older transactions (made before these fields existed) keep
+working and display as before.
+
 ## Metric definitions
 
 * **Counts** include every transaction in the selected period.

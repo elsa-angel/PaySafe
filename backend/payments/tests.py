@@ -4,7 +4,7 @@ from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.db import IntegrityError, transaction as db_transaction
+from django.db import IntegrityError, connection, transaction as db_transaction
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -30,20 +30,21 @@ ANDROID_TABLET = 'Mozilla/5.0 (Linux; Android 13; SM-X700) AppleWebKit/537.36 (K
 FIREFOX_LINUX = 'Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0'
 EDGE_MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0'
 
-BASE = {
-    'amount': '250.50',
-    'payment_method': 'CARD',
-    'card_network': 'VISA',
-    'recipient_name': 'Ravi Kumar',
-    'recipient_email': 'Ravi@Example.com',
-    'description': 'Rent',
-}
+_NOW = timezone.now()
+FUTURE_EXPIRY = f'{_NOW.month:02d}/{(_NOW.year + 3) % 100:02d}'
+TEST_CARD = '4111 1111 1111 1111'  # the standard Visa test number (passes the Luhn check)
+
 METHOD_PAYLOADS = {
-    'CARD': {'payment_method': 'CARD', 'card_network': 'VISA'},
-    'UPI': {'payment_method': 'UPI', 'upi_id': 'Ravi.K@okhdfc'},
-    'BANK_TRANSFER': {'payment_method': 'BANK_TRANSFER', 'bank_name': 'HDFC'},
-    'WALLET': {'payment_method': 'WALLET', 'wallet_provider': 'PAYTM'},
+    'CARD': {'payment_method': 'CARD', 'card_network': 'VISA', 'cardholder_name': 'Ravi Kumar',
+             'card_number': TEST_CARD, 'card_expiry': FUTURE_EXPIRY, 'card_cvv': '123'},
+    'UPI': {'payment_method': 'UPI', 'upi_provider': 'GOOGLE_PAY', 'upi_id': 'Ravi.K@okhdfc'},
+    'BANK_TRANSFER': {'payment_method': 'BANK_TRANSFER', 'bank_name': 'HDFC', 'account_holder_name': 'Ravi Kumar',
+                      'account_number': '123456789012', 'confirm_account_number': '123456789012', 'ifsc_code': 'hdfc0001234'},
+    'WALLET': {'payment_method': 'WALLET', 'wallet_provider': 'PAYTM', 'wallet_identifier_type': 'MOBILE',
+               'wallet_identifier': '+91 98765 43210'},
 }
+COMMON = {'amount': '250.50', 'recipient_name': 'Ravi Kumar', 'recipient_email': 'Ravi@Example.com', 'description': 'Rent'}
+BASE = {**COMMON, **METHOD_PAYLOADS['CARD']}
 
 
 def make_user(email):
@@ -111,10 +112,14 @@ class CreatePaymentTests(PaymentApiTestCase):
             self.assertEqual(txn.recipient_email, 'ravi@example.com')
         self.assertEqual(Transaction.objects.count(), 4)
 
-    def test_only_relevant_method_detail_is_stored(self):
-        res = self.pay(payment_method='UPI', upi_id='ravi@okhdfc', card_network='VISA', bank_name='HDFC', wallet_provider='PAYTM')
+    def test_fields_for_other_methods_are_ignored_and_never_stored(self):
+        res = self.pay(**METHOD_PAYLOADS['UPI'], card_number=TEST_CARD, card_cvv='123', bank_name='HDFC',
+                       account_number='123456789012', wallet_provider='PAYTM', wallet_identifier='9876543210')
+        self.assertEqual(res.status_code, 201)
         txn = Transaction.objects.get(transaction_id=res.data['transaction_id'])
-        self.assertEqual((txn.upi_id, txn.card_network, txn.bank_name, txn.wallet_provider), ('ravi@okhdfc', '', '', ''))
+        self.assertEqual((txn.upi_id, txn.upi_provider), ('ravi.k@okhdfc', 'GOOGLE_PAY'))
+        for column in ('card_network', 'bank_name', 'wallet_provider', 'wallet_identifier_type', 'masked_reference', 'ifsc_code'):
+            self.assertEqual(getattr(txn, column), '', column)
 
     def test_client_cannot_set_sender_id_status_or_fraud_fields(self):
         res = self.pay(user=self.other.pk, user_id=self.other.pk, sender='x', transaction_id='PS-HACKED000000',
@@ -155,25 +160,9 @@ class CreatePaymentTests(PaymentApiTestCase):
         for field in ('recipient_name', 'recipient_email', 'amount'):
             self.assertIn(field, res.data)
 
-    def test_invalid_payment_method_and_method_specific_data(self):
+    def test_invalid_payment_method(self):
         self.assertIn('payment_method', self.pay(payment_method='CASH').data)
-        self.assertIn('payment_method', self.client.post(self.url, {k: v for k, v in BASE.items() if k != 'payment_method'}, format='json').data)
-        cases = [
-            ({'payment_method': 'CARD', 'card_network': ''}, 'card_network'),
-            ({'payment_method': 'CARD', 'card_network': 'AMEX'}, 'card_network'),
-            ({'payment_method': 'UPI', 'upi_id': ''}, 'upi_id'),
-            ({'payment_method': 'UPI', 'upi_id': 'no-at-sign'}, 'upi_id'),
-            ({'payment_method': 'UPI', 'upi_id': 'a@b'}, 'upi_id'),
-            ({'payment_method': 'UPI', 'upi_id': 'name@bank name'}, 'upi_id'),
-            ({'payment_method': 'BANK_TRANSFER', 'bank_name': ''}, 'bank_name'),
-            ({'payment_method': 'BANK_TRANSFER', 'bank_name': 'FAKEBANK'}, 'bank_name'),
-            ({'payment_method': 'WALLET', 'wallet_provider': ''}, 'wallet_provider'),
-            ({'payment_method': 'WALLET', 'wallet_provider': 'NOPE'}, 'wallet_provider'),
-        ]
-        for overrides, field in cases:
-            res = self.pay(**overrides)
-            self.assertEqual(res.status_code, 400, overrides)
-            self.assertIn(field, res.data, overrides)
+        self.assertIn('payment_method', self.client.post(self.url, COMMON, format='json').data)
         self.assertEqual(Transaction.objects.count(), 0)
 
     def test_description_is_optional_and_length_limited(self):
@@ -183,13 +172,12 @@ class CreatePaymentTests(PaymentApiTestCase):
         self.assertEqual(self.pay(description='x' * 255).status_code, 201)
         self.assertIn('description', self.pay(description='x' * 256).data)
 
-    def test_sensitive_card_data_is_never_stored_or_returned(self):
-        res = self.pay(card_number='4111111111111111', cvv='123', pin='1234', upi_pin='1234', otp='999999', password='secret')
+    def test_pin_password_and_otp_fields_are_never_stored_or_returned(self):
+        res = self.pay(pin='4821', upi_pin='7392', otp='605814', password='hunter2-secret', internet_banking_password='bank-secret')
         self.assertEqual(res.status_code, 201)
-        stored = str(Transaction.objects.values().get())
-        for secret in ('4111111111111111', '123456', '999999', 'secret'):
-            self.assertNotIn(secret, stored)
-            self.assertNotIn(secret, str(res.data))
+        blob = str(Transaction.objects.values().get()) + str(res.data)
+        for secret in ('4821', '7392', '605814', 'hunter2-secret', 'bank-secret'):
+            self.assertNotIn(secret, blob)
 
 
 class LocationAndDeviceTests(PaymentApiTestCase):
@@ -420,3 +408,300 @@ class FraudFeaturePreparationTests(PaymentApiTestCase):
         current = self.completed(0, '10')
         with self.assertRaises(FeatureMappingNotConfigured):
             build_model_row(prepare_fraud_features(current))
+
+
+# ---------------------------------------------------------------------------
+# Payment-method-specific details
+# ---------------------------------------------------------------------------
+import logging
+from datetime import date
+
+from django.http import HttpRequest
+from rest_framework.test import APIRequestFactory, force_authenticate
+
+from . import validators
+from .views import SENSITIVE_PARAMETERS, PaymentListCreateView
+
+
+class MethodFieldValidationTests(PaymentApiTestCase):
+    """Each method requires and validates its own fields; the rest are ignored."""
+
+    def assert_rejected(self, field, **overrides):
+        before = Transaction.objects.count()
+        res = self.pay(**overrides)
+        self.assertEqual(res.status_code, 400, overrides)
+        self.assertIn(field, res.data, (field, res.data))
+        self.assertEqual(Transaction.objects.count(), before)  # nothing was created
+        return res
+
+    def card(self, **overrides):
+        return {**METHOD_PAYLOADS['CARD'], **overrides}
+
+    def bank(self, **overrides):
+        return {**METHOD_PAYLOADS['BANK_TRANSFER'], **overrides}
+
+    def wallet(self, **overrides):
+        return {**METHOD_PAYLOADS['WALLET'], **overrides}
+
+    # ---- card ----
+    def test_card_requires_every_field(self):
+        for field in ('cardholder_name', 'card_network', 'card_number', 'card_expiry', 'card_cvv'):
+            self.assert_rejected(field, **self.card(**{field: ''}))
+        res = self.client.post(self.url, {**COMMON, 'payment_method': 'CARD'}, format='json')
+        for field in ('cardholder_name', 'card_network', 'card_number', 'card_expiry', 'card_cvv'):
+            self.assertIn(field, res.data)
+
+    def test_card_number_format_length_and_luhn(self):
+        for bad in ('4111 1111 1111 1112', '4111111111111', '41111111111111111', 'abcd efgh ijkl mnop', '4111-1111-1111-11!1', '0000000000000000'):
+            self.assert_rejected('card_number', **self.card(card_number=bad))
+        for good in ('4111111111111111', '4111-1111-1111-1111', '4111 1111 1111 1111'):
+            self.assertEqual(self.pay(**self.card(card_number=good)).status_code, 201, good)
+
+    def test_card_number_length_depends_on_network(self):
+        other_13 = '4222222222222'  # a 13-digit Luhn-valid number
+        self.assertTrue(validators.luhn_valid(other_13))
+        self.assert_rejected('card_number', **self.card(card_number=other_13))  # Visa must be 16
+        self.assertEqual(self.pay(**self.card(card_network='OTHER', card_number=other_13)).status_code, 201)
+
+    def test_card_name_validation(self):
+        for bad in ('', 'A', '1234', 'Ravi <script>', 'x' * 61):
+            self.assert_rejected('cardholder_name', **self.card(cardholder_name=bad))
+        self.assertEqual(self.pay(**self.card(cardholder_name="Mary-Jane O'Neil Jr.")).status_code, 201)
+
+    def test_card_expiry_validation(self):
+        today = timezone.now()
+        last_month = date(today.year - (today.month == 1), (today.month - 2) % 12 + 1, 1)
+        self.assert_rejected('card_expiry', **self.card(card_expiry=f'{last_month.month:02d}/{last_month.year % 100:02d}'))
+        for bad in ('13/30', '00/30', '1/30', '12-30', '1230', 'ab/cd', f'{today.month:02d}/{(today.year + 40) % 100:02d}'):
+            self.assert_rejected('card_expiry', **self.card(card_expiry=bad))
+        # the current month is still valid; so are 2- and 4-digit years
+        self.assertEqual(self.pay(**self.card(card_expiry=f'{today.month:02d}/{today.year % 100:02d}')).status_code, 201)
+        self.assertEqual(self.pay(**self.card(card_expiry=f'{today.month:02d}/{today.year + 2}')).status_code, 201)
+
+    def test_cvv_length(self):
+        for bad in ('12', '1234', 'abc', '12a', ' '):
+            self.assert_rejected('card_cvv', **self.card(card_cvv=bad))
+        self.assertEqual(self.pay(**self.card(card_cvv='999')).status_code, 201)
+        self.assertEqual(self.pay(**self.card(card_network='OTHER', card_cvv='1234')).status_code, 201)
+
+    def test_card_network_must_be_supported(self):
+        self.assert_rejected('card_network', **self.card(card_network='AMEX'))
+
+    # ---- UPI ----
+    def test_upi_requires_provider_and_valid_id(self):
+        upi = METHOD_PAYLOADS['UPI']
+        self.assert_rejected('upi_provider', **{**upi, 'upi_provider': ''})
+        self.assert_rejected('upi_provider', **{**upi, 'upi_provider': 'MOBIKWIK'})
+        for bad in ('', 'no-at-sign', 'a@b', 'name@bank name', '@bank', 'na me@bank', 'x' * 70 + '@bank'):
+            self.assert_rejected('upi_id', **{**upi, 'upi_id': bad})
+        res = self.pay(**{**upi, 'upi_provider': 'PHONEPE'})
+        txn = Transaction.objects.get(transaction_id=res.data['transaction_id'])
+        self.assertEqual((txn.upi_provider, txn.upi_id), ('PHONEPE', 'ravi.k@okhdfc'))
+        self.assertEqual(res.data['payment_method_detail'], 'ravi.k@okhdfc · PhonePe')
+
+    # ---- bank transfer ----
+    def test_bank_requires_every_field(self):
+        for field in ('bank_name', 'account_holder_name', 'account_number', 'confirm_account_number', 'ifsc_code'):
+            self.assert_rejected(field, **self.bank(**{field: ''}))
+
+    def test_account_number_rules_and_confirmation(self):
+        for bad in ('12345678', '1' * 19, '12345abc9012', '1234 5678 90!2'):
+            self.assert_rejected('account_number', **self.bank(account_number=bad, confirm_account_number=bad))
+        self.assert_rejected('confirm_account_number', **self.bank(confirm_account_number='123456789013'))
+        self.assertEqual(self.pay(**self.bank(account_number='123456789', confirm_account_number='123456789')).status_code, 201)
+        self.assertEqual(self.pay(**self.bank(account_number='1' * 18, confirm_account_number='1' * 18)).status_code, 201)
+
+    def test_ifsc_format_and_bank_prefix(self):
+        for bad in ('HDFC1001234', 'HDF00001234', 'HDFC000123', 'HDFC00012345', '1234A001234', 'hdfc 0001234', 'HDFC0001-34'):
+            self.assert_rejected('ifsc_code', **self.bank(ifsc_code=bad))
+        self.assert_rejected('ifsc_code', **self.bank(ifsc_code='SBIN0001234'))  # HDFC selected
+        res = self.pay(**self.bank(bank_name='SBI', ifsc_code='sbin0001234'))
+        self.assertEqual(Transaction.objects.get(transaction_id=res.data['transaction_id']).ifsc_code, 'SBIN0001234')
+        self.assertEqual(self.pay(**self.bank(bank_name='OTHER', ifsc_code='ABCD0XYZ123')).status_code, 201)
+
+    def test_bank_must_be_supported(self):
+        self.assert_rejected('bank_name', **self.bank(bank_name='FAKEBANK'))
+
+    # ---- wallet ----
+    def test_wallet_requires_provider_type_and_identifier(self):
+        for field in ('wallet_provider', 'wallet_identifier_type', 'wallet_identifier'):
+            self.assert_rejected(field, **self.wallet(**{field: ''}))
+        self.assert_rejected('wallet_provider', **self.wallet(wallet_provider='NOPE'))
+        self.assert_rejected('wallet_identifier_type', **self.wallet(wallet_identifier_type='EMAIL'))
+
+    def test_wallet_mobile_validation(self):
+        for bad in ('12345', '5876543210', '98765432101', '98765 4321x', '+1 9876543210'):
+            self.assert_rejected('wallet_identifier', **self.wallet(wallet_identifier=bad))
+        for good in ('9876543210', '+91 98765-43210', '919876543210', '09876543210'):
+            self.assertEqual(self.pay(**self.wallet(wallet_identifier=good)).status_code, 201, good)
+
+    def test_wallet_id_validation_depends_on_selected_type(self):
+        wallet_id = self.wallet(wallet_identifier_type='WALLET_ID')
+        for bad in ('ab', 'has space', '-start', 'x' * 65, '<script>'):
+            self.assert_rejected('wallet_identifier', **{**wallet_id, 'wallet_identifier': bad})
+        self.assertEqual(self.pay(**{**wallet_id, 'wallet_identifier': 'ravi.k@paytm'}).status_code, 201)
+        # a wallet ID is not acceptable where a mobile number is required, and vice versa is fine as an ID
+        self.assert_rejected('wallet_identifier', **self.wallet(wallet_identifier='ravi.k@paytm'))
+        self.assertEqual(self.pay(**{**wallet_id, 'wallet_identifier': '9876543210'}).status_code, 201)
+
+    def test_validation_messages_never_echo_the_input(self):
+        secrets = {'card_number': '4111111111111112', 'card_cvv': '98x', 'card_expiry': '99/99', 'cardholder_name': '12345'}
+        res = self.pay(**self.card(**secrets))
+        for value in secrets.values():
+            self.assertNotIn(value, str(res.data))
+
+
+class SensitiveDataTests(PaymentApiTestCase):
+    """Raw card numbers, CVVs and account numbers are validated and then discarded."""
+
+    CARD_DIGITS = '4111111111111111'
+    ACCOUNT = '123456789012'
+    MOBILE = '9876543210'
+
+    def all_rows_as_text(self):
+        with connection.cursor() as cursor:
+            cursor.execute(f'SELECT * FROM {Transaction._meta.db_table}')
+            return ' | '.join(str(cell) for row in cursor.fetchall() for cell in row)
+
+    def make_all_payments(self):
+        ids = {}
+        for method, extra in METHOD_PAYLOADS.items():
+            res = self.pay(**extra)
+            self.assertEqual(res.status_code, 201, res.data)
+            ids[method] = res.data['transaction_id']
+        return ids
+
+    def test_masked_references_are_stored_instead_of_raw_values(self):
+        ids = self.make_all_payments()
+        by_method = {m: Transaction.objects.get(transaction_id=i) for m, i in ids.items()}
+        self.assertEqual(by_method['CARD'].masked_reference, '**** 1111')
+        self.assertEqual(by_method['BANK_TRANSFER'].masked_reference, '**** 9012')
+        self.assertEqual(by_method['WALLET'].masked_reference, '******3210')
+        self.assertEqual(by_method['UPI'].masked_reference, '')
+        self.assertEqual(by_method['BANK_TRANSFER'].ifsc_code, 'HDFC0001234')
+        self.assertEqual(by_method['WALLET'].wallet_identifier_type, 'MOBILE')
+
+    def test_no_raw_sensitive_value_reaches_the_database(self):
+        self.make_all_payments()
+        everything = self.all_rows_as_text()
+        for secret in (self.CARD_DIGITS, '4111 1111 1111 1111', '123456789012', '9876543210', '98765 43210',
+                       FUTURE_EXPIRY, 'Ravi Kumar'.upper() + '!'):
+            self.assertNotIn(secret, everything, secret)
+        # CVV is never stored: no column anywhere holds it
+        self.assertFalse([f.name for f in Transaction._meta.get_fields() if 'cvv' in f.name.lower() or 'pin' in f.name.lower()])
+        self.assertNotIn('123 ', everything.replace('**** 1111', '').replace('123456789012', ''))
+
+    def test_wallet_id_is_masked_too(self):
+        res = self.pay(**{**METHOD_PAYLOADS['WALLET'], 'wallet_identifier_type': 'WALLET_ID', 'wallet_identifier': 'ravi.kumar@paytm'})
+        txn = Transaction.objects.get(transaction_id=res.data['transaction_id'])
+        self.assertEqual(txn.masked_reference, 'ra***tm')
+        self.assertNotIn('ravi.kumar@paytm', self.all_rows_as_text())
+
+    def test_responses_and_listings_expose_only_masked_details(self):
+        ids = self.make_all_payments()
+        payloads = [self.client.get(self.url).data, self.client.get(f'{self.url}{ids["CARD"]}/').data,
+                    self.client.get(f'{self.url}{ids["BANK_TRANSFER"]}/').data, self.client.get(f'{self.url}{ids["WALLET"]}/').data]
+        text = str(payloads)
+        for secret in (self.CARD_DIGITS, self.ACCOUNT, self.MOBILE, 'card_number', 'card_cvv', 'cvv', 'account_number'):
+            self.assertNotIn(secret, text, secret)
+        self.assertEqual(payloads[1]['payment_method_detail'], 'Visa · **** 1111')
+        self.assertEqual(payloads[2]['payment_method_detail'], 'HDFC Bank · **** 9012 · IFSC HDFC0001234')
+        self.assertEqual(payloads[3]['payment_method_detail'], 'Paytm · ******3210')
+
+    def test_admin_views_stay_compatible_and_masked(self):
+        ids = self.make_all_payments()
+        admin = User.objects.create_superuser('boss', 'boss@example.com', 'Str0ng-Passw0rd!')
+        admin_client = APIClient()
+        admin_client.force_login(admin)
+        listing = admin_client.get('/api/admin/transactions/')
+        self.assertEqual((listing.status_code, listing.data['count']), (200, 4))
+        for txn_id in ids.values():
+            detail = admin_client.get(f'/api/admin/transactions/{txn_id}/')
+            self.assertEqual(detail.status_code, 200)
+            for secret in (self.CARD_DIGITS, self.ACCOUNT, self.MOBILE):
+                self.assertNotIn(secret, str(detail.data))
+        self.assertEqual(admin_client.get(f'/api/admin/transactions/{ids["CARD"]}/').data['payment_method_detail'], 'Visa · **** 1111')
+        csv = admin_client.get('/api/admin/reports/fraud-monitoring/', {'export': 'csv'}).content.decode()
+        for secret in (self.CARD_DIGITS, self.ACCOUNT, self.MOBILE):
+            self.assertNotIn(secret, csv)
+
+    def test_sensitive_values_are_never_logged(self):
+        records = []
+
+        class Collect(logging.Handler):
+            def emit(self, record):
+                records.append(f'{record.getMessage()} {record.exc_text or ""} {record.__dict__.get("args")}')
+
+        handler, root = Collect(level=logging.DEBUG), logging.getLogger()
+        previous = root.level
+        root.addHandler(handler)
+        root.setLevel(logging.DEBUG)
+        try:
+            self.make_all_payments()
+            self.pay(**{**METHOD_PAYLOADS['CARD'], 'card_cvv': '12'})            # a rejected request (logged by Django as a 4xx)
+            with mock.patch('payments.services.simulate_payment_processing', side_effect=RuntimeError('boom')):
+                self.pay(**METHOD_PAYLOADS['CARD'])                               # an unexpected error is logged with a traceback
+        finally:
+            root.removeHandler(handler)
+            root.setLevel(previous)
+        self.assertTrue(records, 'expected some log output to inspect')
+        joined = '\n'.join(records)
+        for secret in (self.CARD_DIGITS, '4111 1111 1111', self.ACCOUNT, self.MOBILE, '98765', FUTURE_EXPIRY):
+            self.assertNotIn(secret, joined, secret)
+
+    def test_sensitive_parameters_are_registered_for_error_reports(self):
+        request = APIRequestFactory().post(self.url, {}, format='json')
+        force_authenticate(request, user=self.user)
+        PaymentListCreateView.as_view()(request)
+        self.assertEqual(set(request.sensitive_post_parameters), set(SENSITIVE_PARAMETERS))
+        for name in ('card_number', 'card_cvv', 'card_expiry', 'account_number', 'wallet_identifier'):
+            self.assertIn(name, SENSITIVE_PARAMETERS)
+
+    def test_idempotent_retry_does_not_reprocess_or_store_details(self):
+        first = self.pay(key='key-sensitive1')
+        second = self.pay(key='key-sensitive1')
+        self.assertEqual((first.status_code, second.status_code), (201, 200))
+        self.assertEqual(Transaction.objects.count(), 1)
+        self.assertNotIn(self.CARD_DIGITS, self.all_rows_as_text())
+
+
+class LegacyRecordTests(PaymentApiTestCase):
+    """Transactions made before the new fields existed keep working everywhere."""
+
+    def test_old_records_display_and_list_correctly(self):
+        legacy = make_txn(self.user)  # only card_network, no masked reference
+        make_txn(self.user, payment_method='UPI', upi_id='old@okaxis', card_network='')
+        make_txn(self.user, payment_method='BANK_TRANSFER', bank_name='SBI', card_network='')
+        make_txn(self.user, payment_method='WALLET', wallet_provider='PHONEPE', card_network='')
+        self.assertEqual(self.client.get(f'{self.url}{legacy.transaction_id}/').data['payment_method_detail'], 'Visa')
+        details = {t.payment_method: t.payment_method_detail for t in Transaction.objects.all()}
+        self.assertEqual(details, {'CARD': 'Visa', 'UPI': 'old@okaxis', 'BANK_TRANSFER': 'State Bank of India', 'WALLET': 'PhonePe'})
+        self.assertEqual(self.client.get(self.url).data['count'], 4)
+
+
+class ValidatorUnitTests(TestCase):
+    TODAY = date(2026, 10, 9)
+
+    def test_luhn(self):
+        self.assertTrue(validators.luhn_valid('4111111111111111'))
+        self.assertTrue(validators.luhn_valid('5555555555554444'))
+        self.assertFalse(validators.luhn_valid('4111111111111112'))
+
+    def test_expiry_boundaries(self):
+        self.assertEqual(validators.clean_expiry('10/26', self.TODAY), (10, 2026))   # current month is valid
+        self.assertEqual(validators.clean_expiry('10 / 2026', self.TODAY), (10, 2026))
+        with self.assertRaises(validators.InvalidDetail):
+            validators.clean_expiry('09/26', self.TODAY)                              # last month: expired
+        with self.assertRaises(validators.InvalidDetail):
+            validators.clean_expiry('01/47', self.TODAY)                              # more than 20 years ahead
+        self.assertEqual(validators.clean_expiry('12/46', self.TODAY), (12, 2046))
+
+    def test_masks(self):
+        self.assertEqual(validators.mask_last4('4111111111111111'), '**** 1111')
+        self.assertEqual(validators.mask_mobile('9876543210'), '******3210')
+        self.assertEqual(validators.mask_identifier('abcd'), '***cd')
+        self.assertLessEqual(len(validators.mask_identifier('x' * 64)), 32)
+
+    def test_ifsc_prefix_map_covers_every_named_bank(self):
+        from .models import Bank
+        self.assertEqual(set(validators.IFSC_BANK_PREFIX), set(Bank.values) - {Bank.OTHER})

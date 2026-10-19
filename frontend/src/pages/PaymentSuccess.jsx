@@ -41,9 +41,10 @@ export default function PaymentSuccess() {
             )}
             <h2>{succeeded ? 'Payment Successful' : `Payment ${transaction.status_label.toLowerCase()}`}</h2>
             <p className="confirmation__lead">
-              {succeeded ? 'Your payment has been sent.' : 'See the details of this payment below.'}
+              {succeeded ? 'Your simulated payment was recorded.' : 'See the details of this payment below.'}
             </p>
             <TransactionDetails transaction={transaction} />
+            {succeeded && <Alert variant="info">This is a simulated payment. No real money was moved.</Alert>}
             <div className="confirmation__actions">
               <Link to="/transactions" className="btn btn--primary">View Transactions</Link>
               <Link to="/payment" className="btn btn--secondary">Make Another Payment</Link>

@@ -588,3 +588,13 @@ a:hover { text-decoration: underline; }
   .chart-card { padding: 18px 14px; }
 }
 .table .mono { white-space: nowrap; }
+
+/* ---------- Payment-method fields ---------- */
+.field__required { color: var(--coral); font-weight: 800; }
+.form-note { margin: -8px 0 0; font-size: 0.82rem; color: var(--muted); }
+.field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.payment-form .form-section > .alert { margin: 0; }
+.confirmation .alert { margin-top: 18px; text-align: left; }
+@media (max-width: 360px) {
+  .field-row { grid-template-columns: 1fr; }
+}

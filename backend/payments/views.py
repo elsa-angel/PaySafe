@@ -1,5 +1,7 @@
 import re
 
+from django.utils.decorators import method_decorator
+from django.views.decorators.debug import sensitive_post_parameters, sensitive_variables
 from rest_framework import generics, status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
@@ -41,6 +43,13 @@ def _outcome(txn, *, replay=False):
     return Response(TransactionDetailSerializer(txn).data, status=code)
 
 
+SENSITIVE_PARAMETERS = (
+    'card_number', 'card_expiry', 'card_cvv', 'cardholder_name',
+    'account_number', 'confirm_account_number', 'account_holder_name', 'wallet_identifier',
+)
+
+
+@method_decorator(sensitive_post_parameters(*SENSITIVE_PARAMETERS), name='dispatch')
 class PaymentListCreateView(generics.ListCreateAPIView):
     """GET: the signed-in user's transactions (newest first, paginated).
     POST: make a (simulated) payment."""
@@ -58,6 +67,7 @@ class PaymentListCreateView(generics.ListCreateAPIView):
     def get_throttles(self):
         return [PaymentThrottle()] if self.request.method == 'POST' else []
 
+    @sensitive_variables()
     def create(self, request, *args, **kwargs):
         key = request.headers.get('Idempotency-Key')
         if key is not None and not IDEMPOTENCY_KEY_PATTERN.match(key):
