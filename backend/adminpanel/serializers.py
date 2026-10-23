@@ -1,7 +1,9 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from payments.models import FraudStatus, Transaction
+from payments.fraud.presentation import describe, get_analysis, short_label
+from payments.workflow import describe_verification
+from payments.models import Transaction
 
 User = get_user_model()
 
@@ -30,10 +32,8 @@ class AdminTransactionListSerializer(serializers.ModelSerializer):
         return display_name(txn.user)
 
     def get_fraud_analysis(self, txn):
-        """Only present when a real fraud screening result exists (none until the model is integrated)."""
-        if txn.fraud_status == FraudStatus.NOT_CHECKED:
-            return None
-        return txn.get_fraud_status_display()
+        """Short model-outcome label, or None when the transaction was never analysed."""
+        return short_label(get_analysis(txn))
 
 
 class AdminTransactionDetailSerializer(AdminTransactionListSerializer):
@@ -43,13 +43,34 @@ class AdminTransactionDetailSerializer(AdminTransactionListSerializer):
     payment_method_detail = serializers.CharField(read_only=True)
     device_type_label = serializers.CharField(source='get_device_type_display', read_only=True)
     location_status_label = serializers.CharField(source='get_location_status_display', read_only=True)
+    fraud_analysis_detail = serializers.SerializerMethodField()
+    verification = serializers.SerializerMethodField()
+    workflow_events = serializers.SerializerMethodField()
 
     class Meta(AdminTransactionListSerializer.Meta):
         fields = AdminTransactionListSerializer.Meta.fields + (
+            'fraud_analysis_detail', 'verification', 'workflow_events',
             'sender_id', 'description', 'payment_method_detail', 'failure_reason',
             'device_type_label', 'browser', 'operating_system', 'location_status_label', 'updated_at',
         )
         read_only_fields = fields
+
+    def get_verification(self, txn):
+        """Workflow state for administrators. No code, hash or salt exists in this representation."""
+        return describe_verification(txn)
+
+    def get_workflow_events(self, txn):
+        return [{'event_type': e.event_type, 'label': e.get_event_type_display(), 'detail': e.detail,
+                 'created_at': e.created_at} for e in txn.workflow_events.all()]
+
+    def get_fraud_analysis_detail(self, txn):
+        """Full model outcome for administrators: prediction, model version and the threshold used."""
+        analysis = get_analysis(txn)
+        data = describe(analysis)
+        data['failure_category'] = analysis.failure_category or None if analysis else None
+        data['threshold_used'] = analysis.threshold_used if analysis else None
+        data['threshold_source'] = (analysis.threshold_source or None) if analysis else None
+        return data
 
 
 class AdminUserListSerializer(serializers.ModelSerializer):

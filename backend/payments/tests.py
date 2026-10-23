@@ -18,6 +18,8 @@ from .fraud import (
 )
 from .models import FraudStatus, Transaction, TransactionStatus
 from .services import PaymentProcessingError
+from .testing import LOW, code_from, force_prediction
+from django.core import mail
 
 User = get_user_model()
 FAST_HASH = override_settings(PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'])
@@ -97,12 +99,13 @@ class AuthenticationTests(PaymentApiTestCase):
 
 
 class CreatePaymentTests(PaymentApiTestCase):
-    def test_every_payment_method_succeeds(self):
+    def test_every_payment_method_creates_a_pending_payment_awaiting_verification(self):
         for method, extra in METHOD_PAYLOADS.items():
             res = self.pay(**extra)
             self.assertEqual(res.status_code, 201, (method, res.data))
             txn = Transaction.objects.get(transaction_id=res.data['transaction_id'])
-            self.assertEqual(txn.status, TransactionStatus.COMPLETED)
+            self.assertEqual(txn.status, TransactionStatus.PENDING)  # never completed before verification
+            self.assertEqual(res.data['status'], 'PENDING')
             self.assertEqual(txn.payment_method, method)
             self.assertEqual(txn.user, self.user)
             self.assertEqual(txn.fraud_status, FraudStatus.NOT_CHECKED)
@@ -129,7 +132,7 @@ class CreatePaymentTests(PaymentApiTestCase):
         self.assertEqual(txn.user, self.user)
         self.assertNotEqual(txn.transaction_id, 'PS-HACKED000000')
         self.assertTrue(txn.transaction_id.startswith('PS-'))
-        self.assertEqual(txn.status, TransactionStatus.COMPLETED)
+        self.assertEqual(txn.status, TransactionStatus.PENDING)   # client-sent 'FAILED' ignored
         self.assertEqual(txn.fraud_status, FraudStatus.NOT_CHECKED)
         self.assertIsNone(txn.fraud_probability)
 
@@ -153,12 +156,13 @@ class CreatePaymentTests(PaymentApiTestCase):
     def test_missing_and_invalid_recipient(self):
         self.assertIn('recipient_name', self.pay(recipient_name='').data)
         self.assertIn('recipient_name', self.pay(recipient_name='A').data)
-        for bad in ['', 'nope', 'a@b', 'a b@c.com']:
+        for bad in ['nope', 'a@b', 'a b@c.com']:             # recipient e-mail is optional, but a given one must be valid
             self.assertIn('recipient_email', self.pay(recipient_email=bad).data, repr(bad))
         body = {k: v for k, v in BASE.items() if k not in ('recipient_name', 'recipient_email', 'amount')}
         res = self.client.post(self.url, body, format='json')
-        for field in ('recipient_name', 'recipient_email', 'amount'):
+        for field in ('recipient_name', 'amount'):
             self.assertIn(field, res.data)
+        self.assertNotIn('recipient_email', res.data)
 
     def test_invalid_payment_method(self):
         self.assertIn('payment_method', self.pay(payment_method='CASH').data)
@@ -254,9 +258,17 @@ class IdempotencyAndFailureTests(PaymentApiTestCase):
             self.assertEqual(self.pay(key=bad).status_code, 400, bad)
         self.assertEqual(Transaction.objects.count(), 0)
 
+    def _verified_low_risk_payment(self, key):
+        """Creates a low-risk payment and returns (transaction_id, the code the user received by e-mail)."""
+        with force_prediction(LOW):
+            res = self.pay(key=key)
+        self.assertEqual((res.status_code, res.data['status']), (201, 'PENDING'))
+        return res.data['transaction_id'], code_from(mail.outbox[-1])
+
     def test_processing_failure_marks_transaction_failed(self):
+        txn_id, code = self._verified_low_risk_payment('key-failing01')
         with mock.patch('payments.services.simulate_payment_processing', side_effect=PaymentProcessingError('declined')):
-            res = self.pay(key='key-failing01')
+            res = self.client.post(f'{self.url}{txn_id}/verify-otp/', {'code': code}, format='json')
         self.assertEqual(res.status_code, 422)
         self.assertIn('transaction_id', res.data)
         txn = Transaction.objects.get()
@@ -266,9 +278,10 @@ class IdempotencyAndFailureTests(PaymentApiTestCase):
         self.assertEqual(Transaction.objects.count(), 1)
 
     def test_unexpected_processor_error_never_leaves_pending(self):
+        txn_id, code = self._verified_low_risk_payment('key-failing02')
         with mock.patch('payments.services.simulate_payment_processing', side_effect=RuntimeError('boom')), \
                 self.assertLogs('payments.services', level='ERROR'):
-            res = self.pay()
+            res = self.client.post(f'{self.url}{txn_id}/verify-otp/', {'code': code}, format='json')
         self.assertEqual(res.status_code, 422)
         self.assertEqual(Transaction.objects.get().status, 'FAILED')
 

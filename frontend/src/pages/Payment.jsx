@@ -139,7 +139,8 @@ export default function Payment() {
         },
         idempotencyKeyRef.current,
       )
-      navigate(`/payment/success/${transaction.transaction_id}`, { replace: true })
+      // The payment is PENDING until the fraud-response step (alert / one-time code) is completed.
+      navigate(`/payment/verify/${transaction.transaction_id}`, { replace: true })
     } catch (error) {
       // A processing failure (422) was recorded as its own transaction, so a retry needs a fresh key.
       // Network errors keep the key: if the request did arrive, the retry will not pay twice.

@@ -2,13 +2,12 @@
 
 Flow implemented here:
 
-    validated input -> create PENDING transaction -> simulated processing
-                    -> COMPLETED (or FAILED)
+    validated input -> create PENDING transaction -> fraud analysis (XGBoost)
+                    -> fraud-response workflow (see workflow.py)
+                    -> [OTP verified] -> simulated processing -> COMPLETED (or FAILED)
 
-FUTURE INSERTION POINT (XGBoost): between "create PENDING transaction" and
-"simulated processing", call ``payments.fraud.prepare_fraud_features(txn)``,
-map it with the model's FeatureMapper, score it, then decide whether to
-continue, request OTP, alert or cancel. None of that exists yet.
+The payment stays PENDING until the user has completed the verification the risk level requires.
+Fraud-analysis status, verification status and payment status are three separate records.
 """
 import logging
 import math
@@ -17,6 +16,7 @@ from decimal import Decimal, InvalidOperation
 from django.db import IntegrityError, transaction as db_transaction
 
 from .device import parse_user_agent
+from .fraud.analysis import run_fraud_analysis
 from .models import LocationStatus, Transaction, TransactionStatus
 
 logger = logging.getLogger(__name__)
@@ -75,7 +75,8 @@ def find_by_idempotency_key(user, key):
 
 
 def create_payment(*, user, validated_data, raw_data, user_agent, idempotency_key=None):
-    """Creates the transaction and runs the simulated payment.
+    """Creates the PENDING transaction, runs the fraud analysis and starts the OTP workflow.
+    The payment is processed later, only after verification (see workflow.verify_otp).
 
     Returns ``(transaction, created)``; ``created`` is False when an earlier
     request with the same idempotency key already produced this transaction.
@@ -108,15 +109,37 @@ def create_payment(*, user, validated_data, raw_data, user_agent, idempotency_ke
     if txn is None:
         raise PaymentProcessingError('Could not create the transaction.')
 
+    run_fraud_analysis(txn)  # never raises; records a prediction or an explicit "unavailable"/"error"
+    _start_workflow(txn)     # never raises; the payment stays PENDING until the user has verified it
+    return txn, True
+
+
+def _start_workflow(txn):
+    from .workflow import start_verification, start_unavailable
+
+    try:
+        start_verification(txn)
+    except Exception:
+        logger.exception('Fraud-response workflow could not start for %s', txn.transaction_id)
+        try:
+            start_unavailable(txn, reason='WORKFLOW_ERROR')
+        except Exception:
+            logger.exception('Could not record the workflow failure for %s', txn.transaction_id)
+
+
+def process_transaction(txn):
+    """Runs the (simulated) payment and records the final status. Called ONLY after the required
+    verification has succeeded; never leaves a transaction in PENDING."""
     try:
         simulate_payment_processing(txn)
         txn.status = TransactionStatus.COMPLETED
+        txn.failure_reason = ''
     except PaymentProcessingError as exc:
         txn.status = TransactionStatus.FAILED
         txn.failure_reason = str(exc)[:255]
-    except Exception:  # never leave a transaction stuck in PENDING
+    except Exception:
         logger.exception('Unexpected error while processing %s', txn.transaction_id)
         txn.status = TransactionStatus.FAILED
         txn.failure_reason = 'Unexpected processing error.'
     txn.save(update_fields=['status', 'failure_reason', 'updated_at'])
-    return txn, True
+    return txn

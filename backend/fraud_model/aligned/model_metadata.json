@@ -1,0 +1,610 @@
+{
+ "model_name": "paysafe_xgboost_aligned",
+ "version": "20261019-aligned",
+ "created_utc": "2026-10-19T04:07:34Z",
+ "feature_set": "aligned",
+ "deployable_against_paysafe_today": "partial: see docs/feature_mapping_report.md",
+ "target": {
+  "column": "isFraud",
+  "class_mapping": {
+   "0": "genuine",
+   "1": "fraud (IEEE-CIS label)"
+  },
+  "predict_proba_column_for_fraud": 1,
+  "label_meaning": "isFraud is the dataset's confirmed-fraud label; a model output is a PREDICTED risk, not confirmed fraud."
+ },
+ "dataset": {
+  "source": "IEEE-CIS Fraud Detection (train_transaction.csv + train_identity.csv), supplied by the project owner",
+  "files": {
+   "train_transaction.zip": {
+    "zip_bytes": 55058806,
+    "zip_sha256": "9524f9158b2285fb27b63ffb22ac1b3bbda50958435b867e2c7a085a00d7417b"
+   },
+   "train_identity.zip": {
+    "zip_bytes": 3166195,
+    "zip_sha256": "d4adc2d7b50ea8e45847f6f7f777a584d23500bc251a4949e9bf9221c6bbda08"
+   }
+  },
+  "transaction_rows": 590540,
+  "transaction_columns": 394,
+  "identity_rows": 144233,
+  "identity_columns": 41,
+  "identity_ids_not_in_transactions": 0,
+  "transactions_with_identity_record": 144233,
+  "merged_rows": 590540,
+  "merged_columns": 434,
+  "transaction_text_columns": [
+   "M1",
+   "M2",
+   "M3",
+   "M4",
+   "M5",
+   "M6",
+   "M7",
+   "M8",
+   "M9",
+   "P_emaildomain",
+   "ProductCD",
+   "R_emaildomain",
+   "card4",
+   "card6"
+  ],
+  "identity_text_columns": [
+   "DeviceInfo",
+   "DeviceType",
+   "id_12",
+   "id_15",
+   "id_16",
+   "id_23",
+   "id_27",
+   "id_28",
+   "id_29",
+   "id_30",
+   "id_31",
+   "id_33",
+   "id_34",
+   "id_35",
+   "id_36",
+   "id_37",
+   "id_38"
+  ],
+  "join": "LEFT join on TransactionID (one_to_one); no rows dropped, no sampling"
+ },
+ "split": {
+  "method": "chronological by TransactionDT (ties by TransactionID): first 60% train, next 20% validation, last 20% test",
+  "why_not_random_stratified": "97% of rows share a (card1, card2, addr1) group with other rows and fraud rate drifts week to week, so a shuffled split would leak card-level history and overstate performance; production scoring is always forward in time.",
+  "sizes": {
+   "train": 354324,
+   "validation": 118108,
+   "test": 118108
+  },
+  "fraud_count": {
+   "train": 11988,
+   "validation": 4611,
+   "test": 4064
+  },
+  "fraud_rate": {
+   "train": 0.03383344057980831,
+   "validation": 0.03904053916754157,
+   "test": 0.034409184813899145
+  },
+  "TransactionDT_range_days": {
+   "train": [
+    1.0,
+    101.22
+   ],
+   "validation": [
+    101.22,
+    141.12
+   ],
+   "test": [
+    141.12,
+    183.0
+   ]
+  }
+ },
+ "preprocessing": {
+  "artifact": "sklearn Pipeline step 'preprocess' (ColumnTransformer) inside xgboost_fraud_model.pkl",
+  "input": "pandas DataFrame containing at least `input_columns_in_order`; categorical columns as strings (NaN allowed), numeric as floats",
+  "categorical_encoding": "OrdinalEncoder fitted on train; categories seen < 200 times share one code; unseen -> NaN; NaN stays NaN",
+  "numeric": "passed through unchanged",
+  "missing_values": "not imputed; XGBoost learns default split direction from training data",
+  "output_feature_order": [
+   "P_emaildomain",
+   "R_emaildomain",
+   "device_type",
+   "browser_family",
+   "os_family",
+   "TransactionAmt"
+  ],
+  "output_dtype": "float32",
+  "dropped_train_constant_or_empty_columns": [],
+  "excluded_by_design": {
+   "TransactionID": "Row identifier, monotonic with time: lets a model memorise position in the data.",
+   "TransactionDT": "Seconds from an undocumented reference date: raw value is out-of-range for any later date and cannot be aligned to PaySafe timestamps.",
+   "isFraud": "Label."
+  }
+ },
+ "input_columns_in_order": [
+  "P_emaildomain",
+  "R_emaildomain",
+  "device_type",
+  "browser_family",
+  "os_family",
+  "TransactionAmt"
+ ],
+ "categorical_columns": [
+  "P_emaildomain",
+  "R_emaildomain",
+  "device_type",
+  "browser_family",
+  "os_family"
+ ],
+ "numeric_columns": [
+  "TransactionAmt"
+ ],
+ "categorical_vocabulary": {
+  "P_emaildomain": [
+   "aim.com",
+   "anonymous.com",
+   "aol.com",
+   "att.net",
+   "bellsouth.net",
+   "cableone.net",
+   "centurylink.net",
+   "cfl.rr.com",
+   "charter.net",
+   "comcast.net",
+   "cox.net",
+   "earthlink.net",
+   "embarqmail.com",
+   "frontier.com",
+   "frontiernet.net",
+   "gmail",
+   "gmail.com",
+   "gmx.de",
+   "hotmail.co.uk",
+   "hotmail.com",
+   "hotmail.de",
+   "hotmail.es",
+   "hotmail.fr",
+   "icloud.com",
+   "juno.com",
+   "live.com",
+   "live.com.mx",
+   "live.fr",
+   "mac.com",
+   "mail.com",
+   "me.com",
+   "msn.com",
+   "netzero.com",
+   "netzero.net",
+   "optonline.net",
+   "outlook.com",
+   "outlook.es",
+   "prodigy.net.mx",
+   "protonmail.com",
+   "ptd.net",
+   "q.com",
+   "roadrunner.com",
+   "rocketmail.com",
+   "sbcglobal.net",
+   "sc.rr.com",
+   "servicios-ta.com",
+   "suddenlink.net",
+   "twc.com",
+   "verizon.net",
+   "web.de",
+   "windstream.net",
+   "yahoo.co.jp",
+   "yahoo.co.uk",
+   "yahoo.com",
+   "yahoo.com.mx",
+   "yahoo.de",
+   "yahoo.es",
+   "yahoo.fr",
+   "ymail.com",
+   "nan"
+  ],
+  "R_emaildomain": [
+   "aim.com",
+   "anonymous.com",
+   "aol.com",
+   "att.net",
+   "bellsouth.net",
+   "cableone.net",
+   "centurylink.net",
+   "cfl.rr.com",
+   "charter.net",
+   "comcast.net",
+   "cox.net",
+   "earthlink.net",
+   "embarqmail.com",
+   "frontier.com",
+   "frontiernet.net",
+   "gmail",
+   "gmail.com",
+   "gmx.de",
+   "hotmail.co.uk",
+   "hotmail.com",
+   "hotmail.de",
+   "hotmail.es",
+   "hotmail.fr",
+   "icloud.com",
+   "juno.com",
+   "live.com",
+   "live.com.mx",
+   "live.fr",
+   "mac.com",
+   "mail.com",
+   "me.com",
+   "msn.com",
+   "netzero.com",
+   "netzero.net",
+   "optonline.net",
+   "outlook.com",
+   "outlook.es",
+   "prodigy.net.mx",
+   "protonmail.com",
+   "ptd.net",
+   "q.com",
+   "roadrunner.com",
+   "rocketmail.com",
+   "sbcglobal.net",
+   "sc.rr.com",
+   "scranton.edu",
+   "servicios-ta.com",
+   "suddenlink.net",
+   "twc.com",
+   "verizon.net",
+   "web.de",
+   "windstream.net",
+   "yahoo.co.jp",
+   "yahoo.co.uk",
+   "yahoo.com",
+   "yahoo.com.mx",
+   "yahoo.de",
+   "yahoo.es",
+   "yahoo.fr",
+   "ymail.com",
+   "nan"
+  ],
+  "device_type": [
+   "desktop",
+   "mobile",
+   "nan"
+  ],
+  "browser_family": [
+   "chrome",
+   "edge",
+   "firefox",
+   "ie",
+   "opera",
+   "other",
+   "safari",
+   "samsung",
+   "nan"
+  ],
+  "os_family": [
+   "android",
+   "ios",
+   "linux",
+   "macos",
+   "other",
+   "windows",
+   "nan"
+  ]
+ },
+ "model": {
+  "class": "xgboost.XGBClassifier (loaded from the selected native Booster; trained with xgboost.train on a QuantileDMatrix)",
+  "selected_params": {
+   "max_depth": 6,
+   "min_child_weight": 1,
+   "subsample": 0.8,
+   "colsample_bytree": 0.8,
+   "reg_lambda": 1.0,
+   "gamma": 0.0,
+   "scale_pos_weight": 1.0,
+   "objective": "binary:logistic",
+   "eval_metric": "aucpr",
+   "tree_method": "hist",
+   "learning_rate": 0.1,
+   "max_bin": 256,
+   "seed": 42,
+   "verbosity": 0,
+   "num_boost_round_max": 2000
+  },
+  "best_iteration": 65,
+  "trees_in_saved_model": 66,
+  "class_imbalance": {
+   "train_negatives": 342336,
+   "train_positives": 11988,
+   "neg_to_pos_ratio": 28.556556556556558,
+   "scale_pos_weight_options_tried": [
+    1.0,
+    5.344,
+    28.557
+   ],
+   "selected_scale_pos_weight": 1.0,
+   "note": "Weighting applied inside training only; validation/test keep the original class distribution."
+  }
+ },
+ "hyperparameter_search": {
+  "method": "seeded random search, 12 configurations (first = fixed baseline), early stopping on validation aucpr (50 rounds), selection by validation average precision",
+  "grid": {
+   "max_depth": [
+    4,
+    6,
+    8
+   ],
+   "min_child_weight": [
+    1,
+    5
+   ],
+   "subsample": [
+    0.8,
+    1.0
+   ],
+   "colsample_bytree": [
+    0.8,
+    1.0
+   ],
+   "reg_lambda": [
+    1.0,
+    10.0
+   ],
+   "gamma": [
+    0.0,
+    1.0
+   ],
+   "scale_pos_weight": [
+    1.0,
+    5.344,
+    28.557
+   ]
+  },
+  "results": [
+   {
+    "config": {
+     "max_depth": 6,
+     "min_child_weight": 1,
+     "subsample": 0.8,
+     "colsample_bytree": 0.8,
+     "reg_lambda": 1.0,
+     "gamma": 0.0,
+     "scale_pos_weight": 1.0
+    },
+    "best_iteration": 65,
+    "val_average_precision": 0.1875408654808673,
+    "val_roc_auc": 0.7947672096410154,
+    "seconds": 5.6
+   },
+   {
+    "config": {
+     "max_depth": 8,
+     "min_child_weight": 1,
+     "subsample": 0.8,
+     "colsample_bytree": 1.0,
+     "reg_lambda": 1.0,
+     "gamma": 0.0,
+     "scale_pos_weight": 1.0
+    },
+    "best_iteration": 70,
+    "val_average_precision": 0.18620442754307745,
+    "val_roc_auc": 0.7915124902283608,
+    "seconds": 6.4
+   },
+   {
+    "config": {
+     "max_depth": 4,
+     "min_child_weight": 1,
+     "subsample": 0.8,
+     "colsample_bytree": 0.8,
+     "reg_lambda": 10.0,
+     "gamma": 0.0,
+     "scale_pos_weight": 5.344
+    },
+    "best_iteration": 418,
+    "val_average_precision": 0.18573571460192664,
+    "val_roc_auc": 0.7917875694636526,
+    "seconds": 18.5
+   },
+   {
+    "config": {
+     "max_depth": 8,
+     "min_child_weight": 5,
+     "subsample": 0.8,
+     "colsample_bytree": 0.8,
+     "reg_lambda": 10.0,
+     "gamma": 1.0,
+     "scale_pos_weight": 5.344
+    },
+    "best_iteration": 61,
+    "val_average_precision": 0.18750441901040532,
+    "val_roc_auc": 0.7932132336648738,
+    "seconds": 5.6
+   },
+   {
+    "config": {
+     "max_depth": 4,
+     "min_child_weight": 1,
+     "subsample": 1.0,
+     "colsample_bytree": 0.8,
+     "reg_lambda": 1.0,
+     "gamma": 1.0,
+     "scale_pos_weight": 1.0
+    },
+    "best_iteration": 135,
+    "val_average_precision": 0.1814178382039938,
+    "val_roc_auc": 0.7925878288892335,
+    "seconds": 5.6
+   },
+   {
+    "config": {
+     "max_depth": 6,
+     "min_child_weight": 5,
+     "subsample": 1.0,
+     "colsample_bytree": 0.8,
+     "reg_lambda": 10.0,
+     "gamma": 0.0,
+     "scale_pos_weight": 5.344
+    },
+    "best_iteration": 86,
+    "val_average_precision": 0.18705998101685362,
+    "val_roc_auc": 0.7931528736276132,
+    "seconds": 6.4
+   },
+   {
+    "config": {
+     "max_depth": 4,
+     "min_child_weight": 5,
+     "subsample": 1.0,
+     "colsample_bytree": 0.8,
+     "reg_lambda": 1.0,
+     "gamma": 0.0,
+     "scale_pos_weight": 28.557
+    },
+    "best_iteration": 236,
+    "val_average_precision": 0.17907440502957617,
+    "val_roc_auc": 0.789347760713127,
+    "seconds": 10.5
+   },
+   {
+    "config": {
+     "max_depth": 4,
+     "min_child_weight": 5,
+     "subsample": 0.8,
+     "colsample_bytree": 0.8,
+     "reg_lambda": 1.0,
+     "gamma": 1.0,
+     "scale_pos_weight": 5.344
+    },
+    "best_iteration": 143,
+    "val_average_precision": 0.18307516121795114,
+    "val_roc_auc": 0.7943133518804325,
+    "seconds": 8.2
+   },
+   {
+    "config": {
+     "max_depth": 6,
+     "min_child_weight": 5,
+     "subsample": 0.8,
+     "colsample_bytree": 1.0,
+     "reg_lambda": 10.0,
+     "gamma": 0.0,
+     "scale_pos_weight": 28.557
+    },
+    "best_iteration": 160,
+    "val_average_precision": 0.18443742011647682,
+    "val_roc_auc": 0.782941817802412,
+    "seconds": 9.4
+   },
+   {
+    "config": {
+     "max_depth": 6,
+     "min_child_weight": 1,
+     "subsample": 0.8,
+     "colsample_bytree": 0.8,
+     "reg_lambda": 1.0,
+     "gamma": 1.0,
+     "scale_pos_weight": 5.344
+    },
+    "best_iteration": 123,
+    "val_average_precision": 0.18719992790975454,
+    "val_roc_auc": 0.7929918485602637,
+    "seconds": 7.6
+   },
+   {
+    "config": {
+     "max_depth": 6,
+     "min_child_weight": 1,
+     "subsample": 1.0,
+     "colsample_bytree": 0.8,
+     "reg_lambda": 1.0,
+     "gamma": 0.0,
+     "scale_pos_weight": 5.344
+    },
+    "best_iteration": 72,
+    "val_average_precision": 0.1853649225384632,
+    "val_roc_auc": 0.7932199091255692,
+    "seconds": 5.6
+   },
+   {
+    "config": {
+     "max_depth": 6,
+     "min_child_weight": 5,
+     "subsample": 0.8,
+     "colsample_bytree": 0.8,
+     "reg_lambda": 10.0,
+     "gamma": 0.0,
+     "scale_pos_weight": 28.557
+    },
+    "best_iteration": 170,
+    "val_average_precision": 0.18227547449395867,
+    "val_roc_auc": 0.7874314544501597,
+    "seconds": 9.9
+   }
+  ]
+ },
+ "thresholds": {
+  "primary": {
+   "name": "f1_max_on_validation",
+   "objective": "Threshold maximising F1 (equal weight on precision and recall) on the validation set. Documented default for a first deployment; revise with real review/friction costs.",
+   "threshold": 0.10551805049180984,
+   "val_precision": 0.22294172062904719,
+   "val_recall": 0.3658642376924745,
+   "val_f1": 0.2770569880111677,
+   "val_flag_rate": 0.06406847969654893
+  },
+  "high_precision": null,
+  "note": "Chosen on validation only. The score is a risk score from a model trained with class weighting, not a calibrated probability; recalibrate before showing it to users as a percentage."
+ },
+ "libraries": {
+  "python": "3.12.3",
+  "xgboost": "3.4.1",
+  "scikit_learn": "1.8.0",
+  "pandas": "3.0.2",
+  "numpy": "2.4.4",
+  "joblib": "1.5.3"
+ },
+ "hardware": {
+  "cpu_threads": 1,
+  "platform": "Linux-6.18.44-fc-v139-x86_64-with-glibc2.39"
+ },
+ "seed": 42,
+ "training_seconds": 128.0,
+ "test_metrics_summary": {
+  "roc_auc": 0.7669061030491892,
+  "pr_auc": 0.15180245042132925,
+  "precision": 0.19923201890415004,
+  "recall": 0.3319389763779528,
+  "f1": 0.24900784494693123,
+  "caveat": "Held-out chronological test of the IEEE-CIS data. Not production performance."
+ },
+ "top_features_by_gain": [
+  {
+   "feature": "device_type",
+   "gain": 54.43355178833008
+  },
+  {
+   "feature": "R_emaildomain",
+   "gain": 37.55473709106445
+  },
+  {
+   "feature": "os_family",
+   "gain": 36.178897857666016
+  },
+  {
+   "feature": "TransactionAmt",
+   "gain": 20.38029670715332
+  },
+  {
+   "feature": "P_emaildomain",
+   "gain": 15.163690567016602
+  },
+  {
+   "feature": "browser_family",
+   "gain": 14.291556358337402
+  }
+ ]
+}

@@ -12,6 +12,7 @@ import Login from './pages/Login'
 import NotFound from './pages/NotFound'
 import Payment from './pages/Payment'
 import PaymentSuccess from './pages/PaymentSuccess'
+import PaymentVerification from './pages/PaymentVerification'
 import Profile from './pages/Profile'
 import Signup from './pages/Signup'
 import TransactionDetail from './pages/TransactionDetail'
@@ -30,6 +31,7 @@ export default function App() {
         <Route element={<RoleRoute role="user" />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/payment" element={<Payment />} />
+          <Route path="/payment/verify/:transactionId" element={<PaymentVerification />} />
           <Route path="/payment/success/:transactionId" element={<PaymentSuccess />} />
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/transactions/:transactionId" element={<TransactionDetail />} />

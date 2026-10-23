@@ -10,17 +10,23 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import math
 import os
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from corsheaders.defaults import default_headers
+from django.core.exceptions import ImproperlyConfigured
 from django.core.management.utils import get_random_secret_key
-from dotenv import load_dotenv
+
+from .envloader import load_env_file
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-load_dotenv(BASE_DIR / '.env')
+# Configuration precedence (see config/envloader.py): non-empty real environment variable > backend/.env > default.
+# Empty inherited variables are treated as unset, so they cannot hide a value that is present in .env.
+ENV_FILE_REPORT = load_env_file(BASE_DIR / '.env')
 
 
 def env_list(name, default=''):
@@ -162,6 +168,7 @@ REST_FRAMEWORK = {
         'signup': '10/hour',
         'change_password': '10/hour',
         'payment': '30/min',
+        'otp': '30/min',
     },
 }
 
@@ -183,3 +190,88 @@ if not DEBUG:
 
 # Sign in with email (or username) for every account, including superusers.
 AUTHENTICATION_BACKENDS = ['accounts.backends.EmailOrUsernameBackend']
+
+
+# --- PaySafe: fraud model (XGBoost, trained in Phase 1) ----------------------
+# The artifact directory is private server-side data: it is never served or exposed by any API.
+FRAUD_MODEL_ENABLED = os.environ.get('FRAUD_MODEL_ENABLED', 'True').lower() in ('1', 'true', 'yes')
+FRAUD_MODEL_DIR = Path(os.environ.get('FRAUD_MODEL_DIR') or BASE_DIR / 'fraud_model' / 'aligned')
+
+
+def _optional_number(name, convert, low, high):
+    raw = os.environ.get(name, '').strip()
+    if not raw:
+        return None
+    try:
+        value = convert(raw)
+        if not math.isfinite(value):      # rejects NaN / Infinity (Decimal and float)
+            raise ValueError
+    except (InvalidOperation, ValueError):
+        raise ImproperlyConfigured(f'{name} must be a number.')
+    if not low < value < high:
+        raise ImproperlyConfigured(f'{name} is out of range.')
+    return value
+
+
+def _fraud_conversion_rate():
+    """INR per 1 USD, or ``(None, problem)``. A missing or invalid rate must never stop the server or
+    be guessed: it leaves the rate unset, so every fraud analysis is reported as "unavailable"
+    (CONVERSION_RATE_NOT_CONFIGURED) and no payment is approved without verification. The problem
+    text names the variable only, never its value."""
+    if not os.environ.get('FRAUD_INR_PER_USD', '').strip():
+        return None, 'FRAUD_INR_PER_USD is not set.'
+    try:
+        return _optional_number('FRAUD_INR_PER_USD', Decimal, Decimal(0), Decimal(10000)), None
+    except ImproperlyConfigured as exc:
+        return None, f'{exc} The value was ignored.'
+
+
+# INR per 1 USD. The model was trained on amounts in USD, so INR payments are converted. This is an
+# operator policy decision with NO default: when unset or invalid, predictions are reported as unavailable.
+FRAUD_INR_PER_USD, FRAUD_INR_PER_USD_PROBLEM = _fraud_conversion_rate()
+# HIGH_RISK_THRESHOLD: optional override of the high-risk decision threshold. When unset, the threshold chosen on the Phase 1
+# validation set (model_metadata.json) is used. Overrides are recorded on every prediction.
+HIGH_RISK_THRESHOLD = (
+    _optional_number('HIGH_RISK_THRESHOLD', float, 0.0, 1.0)
+    or _optional_number('FRAUD_MODEL_THRESHOLD', float, 0.0, 1.0)   # legacy name from Phase 2
+)
+
+
+# --- PaySafe: OTP verification (Phase 3) ---------------------------------------
+def _bounded_int(name, default, low, high):
+    raw = os.environ.get(name, '').strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ImproperlyConfigured(f'{name} must be a whole number.')
+    if not low <= value <= high:
+        raise ImproperlyConfigured(f'{name} must be between {low} and {high}.')
+    return value
+
+
+OTP_LENGTH = _bounded_int('OTP_LENGTH', 6, 6, 10)
+OTP_EXPIRY_SECONDS = _bounded_int('OTP_EXPIRY_SECONDS', 300, 60, 3600)            # life of one code
+OTP_MAX_ATTEMPTS = _bounded_int('OTP_MAX_ATTEMPTS', 5, 1, 10)                     # wrong guesses per code
+OTP_MAX_RESENDS = _bounded_int('OTP_MAX_RESENDS', 3, 0, 10)                       # extra codes after the first
+OTP_RESEND_COOLDOWN_SECONDS = _bounded_int('OTP_RESEND_COOLDOWN_SECONDS', 30, 0, 3600)
+OTP_MAX_PER_USER_PER_HOUR = _bounded_int('OTP_MAX_PER_USER_PER_HOUR', 10, 1, 100)  # emails, across transactions
+# How long a payment may wait for the user (decision + OTP) before it is cancelled.
+VERIFICATION_WINDOW_SECONDS = _bounded_int('VERIFICATION_WINDOW_SECONDS', 1800, 120, 86400)
+
+# --- PaySafe: e-mail (Django's e-mail framework; everything comes from the environment) ----
+# Secure default: real SMTP. For local development set
+# EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend (it prints each e-mail, including the
+# one-time code, to the server console: never use it outside development).
+EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
+EMAIL_HOST = os.environ.get('EMAIL_HOST', 'localhost')
+EMAIL_PORT = _bounded_int('EMAIL_PORT', 587, 1, 65535)
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True').lower() in ('1', 'true', 'yes')
+EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'False').lower() in ('1', 'true', 'yes')
+EMAIL_TIMEOUT = _bounded_int('EMAIL_TIMEOUT', 10, 1, 120)
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'PaySafe <no-reply@paysafe.local>')
+if EMAIL_USE_TLS and EMAIL_USE_SSL:
+    raise ImproperlyConfigured('EMAIL_USE_TLS and EMAIL_USE_SSL cannot both be enabled.')

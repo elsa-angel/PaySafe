@@ -77,17 +77,19 @@ def _windowed_rule(queryset, *, rule_id, name, description, threshold, count, wi
     }
 
 
-def _large_amount_rule(queryset):
+def _large_amount_rule(queryset, baseline_scope=None):
+    scoped = baseline_scope is not None
     base = {
         'id': 'large_amount',
         'name': 'Unusually large amounts',
         'description': (
-            f'Payments larger than {LARGE_AMOUNT_MULTIPLIER}x the platform-wide average completed payment '
-            '(all time).'
+            f'Payments larger than {LARGE_AMOUNT_MULTIPLIER}x the average completed payment '
+            + ('of the selected period.' if scoped else 'platform-wide (all time).')
         ),
         'threshold': f'amount > {LARGE_AMOUNT_MULTIPLIER} x average completed amount',
     }
-    baseline = Transaction.objects.filter(status=TransactionStatus.COMPLETED).aggregate(
+    source = Transaction.objects.all() if baseline_scope is None else baseline_scope
+    baseline = source.filter(status=TransactionStatus.COMPLETED).aggregate(
         average=Avg('amount'), sample=Count('pk')
     )
     if baseline['sample'] < LARGE_AMOUNT_MIN_BASELINE_SAMPLE:
@@ -111,8 +113,11 @@ def _large_amount_rule(queryset):
     }
 
 
-def rule_based_indicators(queryset):
-    """Evaluates every indicator over the given (already date/filter-scoped) transactions."""
+def rule_based_indicators(queryset, baseline_scope=None):
+    """Evaluates every indicator over the given (already date/filter-scoped) transactions.
+
+    ``baseline_scope`` limits the "large amount" average to those transactions (reports pass the selected
+    period, so nothing outside it influences a report). Without it the baseline is platform-wide."""
     return [
         _windowed_rule(
             queryset,
@@ -124,7 +129,7 @@ def rule_based_indicators(queryset):
             count=RAPID_REPEAT_COUNT,
             window=RAPID_REPEAT_WINDOW,
         ),
-        _large_amount_rule(queryset),
+        _large_amount_rule(queryset, baseline_scope),
         _windowed_rule(
             queryset,
             rule_id='repeated_failures',

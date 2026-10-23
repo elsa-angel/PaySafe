@@ -17,4 +17,14 @@ export const paymentService = {
   list: (page = 1) => apiRequest(`/api/payments/?page=${page}`),
 
   get: (transactionId) => apiRequest(`/api/payments/${encodeURIComponent(transactionId)}/`),
+
+  // Fraud-response actions. The backend decides everything; these only report what the user chose.
+  continueWithOtp: (transactionId) => action(transactionId, 'continue'),
+  cancel: (transactionId) => action(transactionId, 'cancel'),
+  resendOtp: (transactionId) => action(transactionId, 'resend-otp'),
+  verifyOtp: (transactionId, code) => action(transactionId, 'verify-otp', { code }),
+}
+
+function action(transactionId, name, body) {
+  return apiRequest(`/api/payments/${encodeURIComponent(transactionId)}/${name}/`, { method: 'POST', body: body ?? {} })
 }

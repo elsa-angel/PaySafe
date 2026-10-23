@@ -2,13 +2,17 @@ import re
 
 from django.utils.decorators import method_decorator
 from django.views.decorators.debug import sensitive_post_parameters, sensitive_variables
+from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
+from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.throttling import SimpleRateThrottle
 
+from . import workflow
 from .models import Transaction, TransactionStatus
 from .serializers import (
+    OtpVerifySerializer,
     PaymentCreateSerializer,
     TransactionDetailSerializer,
     TransactionListSerializer,
@@ -23,6 +27,15 @@ class PaymentThrottle(SimpleRateThrottle):
     """Limits payment submissions per authenticated user."""
 
     scope = 'payment'
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {'scope': self.scope, 'ident': request.user.pk}
+
+
+class OtpThrottle(SimpleRateThrottle):
+    """Limits verification / resend / continue / cancel requests per authenticated user."""
+
+    scope = 'otp'
 
     def get_cache_key(self, request, view):
         return self.cache_format % {'scope': self.scope, 'ident': request.user.pk}
@@ -97,4 +110,62 @@ class TransactionDetailView(generics.RetrieveAPIView):
 
     def get_queryset(self):
         # Scoped to the current user: other users' IDs simply 404.
-        return Transaction.objects.filter(user=self.request.user)
+        return Transaction.objects.filter(user=self.request.user).select_related('fraud_analysis', 'verification')
+
+
+# ----------------------------------------------------------------------------- fraud-response actions
+def _workflow_error(txn, exc):
+    txn = Transaction.objects.get(pk=txn.pk)   # fresh state: the failed action may have changed it
+    response = Response(
+        {'detail': exc.message, 'code': exc.code, 'verification': workflow.describe_verification(txn)},
+        status=exc.http_status,
+    )
+    if exc.retry_after:
+        response['Retry-After'] = str(exc.retry_after)
+    return response
+
+
+class _WorkflowActionView(APIView):
+    """Base for the actions on one of the signed-in user's own transactions (others' IDs 404)."""
+
+    throttle_classes = [OtpThrottle]
+    action = None
+
+    def get_transaction(self, request, transaction_id):
+        return get_object_or_404(Transaction.objects.filter(user=request.user), transaction_id=transaction_id)
+
+    def run(self, request, txn):
+        return getattr(workflow, self.action)(txn)
+
+    def post(self, request, transaction_id):
+        txn = self.get_transaction(request, transaction_id)
+        try:
+            txn = self.run(request, txn)
+        except workflow.WorkflowError as exc:
+            return _workflow_error(txn, exc)
+        txn = Transaction.objects.select_related('fraud_analysis', 'verification').get(pk=txn.pk)
+        return _outcome(txn, replay=True)
+
+
+class ContinueView(_WorkflowActionView):
+    """High risk: the user chooses to continue, which e-mails a one-time code."""
+    action = 'continue_with_otp'
+
+
+class CancelView(_WorkflowActionView):
+    """The user terminates the transaction."""
+    action = 'cancel'
+
+
+class ResendOtpView(_WorkflowActionView):
+    action = 'resend_otp'
+
+
+@method_decorator(sensitive_post_parameters('code'), name='dispatch')
+class VerifyOtpView(_WorkflowActionView):
+    action = 'verify_otp'
+
+    def run(self, request, txn):
+        serializer = OtpVerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return workflow.verify_otp(txn, serializer.validated_data['code'])

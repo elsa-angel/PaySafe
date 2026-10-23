@@ -1,0 +1,50 @@
+{
+ "note": "Self-test rows from the Phase 1 test period (6 canonical model inputs only) with the scores the in-memory training model produced.",
+ "rows": [
+  {
+   "P_emaildomain": "gmail.com",
+   "R_emaildomain": null,
+   "device_type": null,
+   "browser_family": null,
+   "os_family": null,
+   "TransactionAmt": 171.0,
+   "expected_score": 0.03239891678094864
+  },
+  {
+   "P_emaildomain": "gmail.com",
+   "R_emaildomain": "gmail.com",
+   "device_type": "desktop",
+   "browser_family": "chrome",
+   "os_family": null,
+   "TransactionAmt": 13.034000396728516,
+   "expected_score": 0.1603374183177948
+  },
+  {
+   "P_emaildomain": null,
+   "R_emaildomain": null,
+   "device_type": null,
+   "browser_family": null,
+   "os_family": null,
+   "TransactionAmt": 49.0,
+   "expected_score": 0.026964686810970306
+  },
+  {
+   "P_emaildomain": "gmail.com",
+   "R_emaildomain": "gmail.com",
+   "device_type": "desktop",
+   "browser_family": "chrome",
+   "os_family": null,
+   "TransactionAmt": 42.54399871826172,
+   "expected_score": 0.1397089809179306
+  },
+  {
+   "P_emaildomain": "yahoo.com",
+   "R_emaildomain": null,
+   "device_type": null,
+   "browser_family": null,
+   "os_family": null,
+   "TransactionAmt": 29.950000762939453,
+   "expected_score": 0.011076959781348705
+  }
+ ]
+}

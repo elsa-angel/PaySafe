@@ -14,7 +14,7 @@ translation lives behind the ``FeatureMapper`` interface below and must be
 implemented from the training pipeline's artifacts (feature list, encoders,
 fill values), never guessed here.
 
-Nothing in this package loads XGBoost or a model file, or scores anything.
+Scoring lives in ``service.py`` / ``analysis.py``; the strict mapper is ``mapper.py``.
 """
 from dataclasses import asdict, dataclass
 from decimal import Decimal
@@ -41,6 +41,7 @@ class FraudSourceData:
     upi_handle: str  # the part after "@" in a UPI ID (never the full ID)
     has_description: bool
     recipient_email_domain: str
+    sender_email_domain: str  # domain of the authenticated sender's own account e-mail
     # time
     timestamp: Any
     hour_of_day: int
@@ -93,7 +94,8 @@ def prepare_fraud_features(transaction: Transaction) -> FraudSourceData:
         wallet_provider=transaction.wallet_provider,
         upi_handle=transaction.upi_id.partition('@')[2],
         has_description=bool(transaction.description),
-        recipient_email_domain=transaction.recipient_email.partition('@')[2],
+        recipient_email_domain=transaction.recipient_email.partition('@')[2].lower(),
+        sender_email_domain=(user.email or '').partition('@')[2].strip().lower(),
         timestamp=transaction.timestamp,
         hour_of_day=local_time.hour,
         day_of_week=local_time.weekday(),

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import Alert from '../components/Alert'
 import AppShell from '../components/AppShell'
 import { ReceiptIcon } from '../components/Icons'
 import TransactionDetails from '../components/TransactionDetails'
@@ -36,7 +37,17 @@ export default function TransactionDetail() {
             <Link to="/transactions" className="btn btn--primary">Back to transactions</Link>
           </div>
         )}
-        {status === 'ready' && <TransactionDetails transaction={transaction} />}
+        {status === 'ready' && (
+          <>
+            {transaction.status === 'PENDING' && transaction.verification?.can_cancel && (
+              <Alert variant="info">
+                This payment is waiting for verification and has not been completed.{' '}
+                <Link to={`/payment/verify/${transaction.transaction_id}`}>Continue verification</Link>
+              </Alert>
+            )}
+            <TransactionDetails transaction={transaction} />
+          </>
+        )}
       </section>
     </AppShell>
   )

@@ -5,6 +5,8 @@ from django.utils import timezone
 from django.views.decorators.debug import sensitive_variables
 from rest_framework import serializers
 
+from .fraud.presentation import describe, get_analysis
+from .workflow import describe_verification
 from .models import PaymentMethod, Transaction
 from .validators import validate_method_details
 
@@ -69,7 +71,10 @@ class PaymentCreateSerializer(serializers.Serializer):
         error_messages={'max_length': f'Note can be at most {DESCRIPTION_MAX_LENGTH} characters.'},
     )
     recipient_name = serializers.CharField(max_length=120, error_messages={'required': 'Recipient name is required.', 'blank': 'Recipient name is required.'})
-    recipient_email = serializers.EmailField(max_length=254, error_messages={'required': 'Recipient email is required.', 'blank': 'Recipient email is required.', 'invalid': 'Enter a valid email address.'})
+    recipient_email = serializers.EmailField(
+        required=False, allow_blank=True, allow_null=True, max_length=254,
+        error_messages={'invalid': 'Enter a valid email address.'},
+    )
 
     def validate_amount(self, value):
         if value <= 0:
@@ -83,7 +88,7 @@ class PaymentCreateSerializer(serializers.Serializer):
         return value
 
     def validate_recipient_email(self, value):
-        return value.strip().lower()
+        return (value or '').strip().lower()      # optional: empty / missing / null all mean "not provided"
 
     def validate_description(self, value):
         return ' '.join(value.split())
@@ -99,7 +104,7 @@ class PaymentCreateSerializer(serializers.Serializer):
             'payment_method': attrs['payment_method'],
             'description': attrs.get('description', ''),
             'recipient_name': attrs['recipient_name'],
-            'recipient_email': attrs['recipient_email'],
+            'recipient_email': attrs.get('recipient_email', ''),
             **stored,
         }
 
@@ -118,13 +123,36 @@ class TransactionListSerializer(serializers.ModelSerializer):
 
 
 class TransactionDetailSerializer(TransactionListSerializer):
-    """Adds user-relevant detail. Deliberately omits location, device, fraud
-    and other internal fields."""
+    """Adds user-relevant detail plus the fraud-model outcome. Deliberately omits
+    location, device and other internal fields."""
 
     payment_method_detail = serializers.CharField(read_only=True)
+    fraud_analysis = serializers.SerializerMethodField()
+    verification = serializers.SerializerMethodField()
 
     class Meta(TransactionListSerializer.Meta):
         fields = TransactionListSerializer.Meta.fields + (
-            'recipient_email', 'payment_method_detail', 'description',
+            'recipient_email', 'payment_method_detail', 'description', 'fraud_analysis', 'verification',
         )
         read_only_fields = fields
+
+    def get_fraud_analysis(self, txn):
+        """Server-side model outcome only (never anything the client sent). Coordinates, device
+        details, thresholds and failure internals stay out of this response."""
+        return describe(get_analysis(txn))
+
+    def get_verification(self, txn):
+        """OTP / fraud-response state, computed by the backend. The client cannot influence it."""
+        return describe_verification(txn)
+
+
+class OtpVerifySerializer(serializers.Serializer):
+    """Format check only. Whether the code is correct is decided by workflow.verify_otp."""
+
+    code = serializers.CharField(max_length=16, trim_whitespace=True)
+
+    def validate_code(self, value):
+        from django.conf import settings
+        if not value.isdigit() or len(value) != settings.OTP_LENGTH:
+            raise serializers.ValidationError(f'Enter the {settings.OTP_LENGTH}-digit code from your e-mail.')
+        return value
