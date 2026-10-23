@@ -2,16 +2,21 @@ from django.contrib.admin.models import CHANGE, LogEntry
 from django.contrib.auth import get_user_model
 from django.db.models import Count, Max, Q, Sum
 from django.http import Http404, HttpResponse
+from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from zoneinfo import ZoneInfo
 
 from payments.models import Transaction, TransactionStatus
 
 from . import analytics, reports
-from .monitoring import RULES_DISCLAIMER, get_confirmed_fraud_status, get_model_status, rule_based_indicators
+from .monitoring import (
+    RULES_DISCLAIMER, get_confirmed_fraud_status, get_model_status, prediction_statistics, response_statistics,
+    rule_based_indicators,
+)
 from .analytics import earliest_date
 from .params import (
     TRANSACTION_ORDERING, USER_ORDERING, describe_range, filter_by_date, parse_params, resolve_buckets,
@@ -35,6 +40,19 @@ class AdminPagination(PageNumberPagination):
 
 class AdminAPIView(APIView):
     permission_classes = [IsSuperuser]
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)        # authentication and the superuser check come first
+        name = request.query_params.get('tz')
+        if name:
+            try:
+                timezone.activate(ZoneInfo(name))
+            except (KeyError, ValueError, OSError):
+                pass                                      # parse_params rejects an unknown zone with a 400
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        timezone.deactivate()                             # never leak the admin's zone into another request
+        return super().finalize_response(request, response, *args, **kwargs)
 
 
 def _earliest(*dates):
@@ -64,7 +82,7 @@ class OverviewView(AdminAPIView):
             _earliest(earliest_date(Transaction.objects.all(), 'created_at'), earliest_date(users, 'date_joined')),
         )
         user_stats = analytics.user_summary(users)
-        recent = Transaction.objects.select_related('user').order_by('-created_at', '-id')[:RECENT_LIMIT]
+        recent = Transaction.objects.select_related('user', 'fraud_analysis', 'verification').order_by('-created_at', '-id')[:RECENT_LIMIT]
         return Response({
             'period': _period(params, group_by),
             'currency': CURRENCY,
@@ -89,8 +107,8 @@ class OverviewView(AdminAPIView):
 # --------------------------------------------------------- fraud statistics
 
 class FraudStatisticsView(AdminAPIView):
-    """Activity analytics + preliminary rule-based indicators. The ML model and
-    confirmed-fraud sections report their (unavailable) status and nothing else."""
+    """Activity analytics, XGBoost prediction statistics (from stored results only) and preliminary
+    rule-based indicators. No model-quality metrics: PaySafe has no confirmed fraud labels."""
 
     def get(self, request):
         params = parse_params(request)
@@ -102,6 +120,8 @@ class FraudStatisticsView(AdminAPIView):
             'money_note': analytics.MONEY_NOTE,
             'ml_model': get_model_status(),
             'confirmed_fraud': get_confirmed_fraud_status(),
+            'predictions': prediction_statistics(transactions, group_by, buckets),
+            'fraud_response': response_statistics(transactions, group_by, buckets),
             'activity': {
                 'summary': analytics.transaction_summary(transactions),
                 'series': analytics.activity_series(transactions, group_by, buckets),
@@ -178,7 +198,7 @@ class AdminUserStatusView(AdminAPIView):
 # ------------------------------------------------------------ transactions
 
 def filtered_transactions(params, base=None):
-    queryset = (base if base is not None else Transaction.objects.all()).select_related('user')
+    queryset = (base if base is not None else Transaction.objects.all()).select_related('user', 'fraud_analysis', 'verification')
     queryset = filter_by_date(queryset, 'created_at', params)
     if params.get('status'):
         queryset = queryset.filter(status=params['status'])
@@ -208,7 +228,7 @@ class AdminTransactionDetailView(generics.RetrieveAPIView):
     permission_classes = [IsSuperuser]
     serializer_class = AdminTransactionDetailSerializer
     lookup_field = 'transaction_id'
-    queryset = Transaction.objects.select_related('user')
+    queryset = Transaction.objects.select_related('user', 'fraud_analysis', 'verification')
 
 
 class AdminUserTransactionsView(AdminTransactionListView):

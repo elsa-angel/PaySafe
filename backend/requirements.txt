@@ -2,3 +2,9 @@ Django>=5.2,<5.3
 djangorestframework>=3.15
 django-cors-headers>=4.4
 python-dotenv>=1.0
+# Fraud model (Phase 1 artifacts). The pickled pipeline loads only with these exact versions.
+xgboost==3.4.1
+scikit-learn==1.8.0
+pandas>=3.0,<3.1
+numpy>=2.4,<2.5
+joblib>=1.5,<1.6

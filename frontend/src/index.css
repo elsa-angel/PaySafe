@@ -598,3 +598,36 @@ a:hover { text-decoration: underline; }
 @media (max-width: 360px) {
   .field-row { grid-template-columns: 1fr; }
 }
+
+/* ---- Fraud analysis panel (model outcome; informational only) ---- */
+.fraud-panel { margin-top: 20px; padding: 16px 18px; border-radius: 14px; background: var(--blue-100); border: 1px solid transparent; }
+.fraud-panel--flagged { background: #fdecee; }
+.fraud-panel--clear { background: #e5f6ee; }
+.fraud-panel__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.fraud-panel__head h3 { font-size: 1rem; }
+.fraud-panel__badge { padding: 3px 12px; font-size: 0.78rem; font-weight: 700; border-radius: 999px; color: var(--blue-600); background: #fff; }
+.fraud-panel__badge--flagged { color: var(--coral); }
+.fraud-panel__badge--clear { color: var(--green); }
+.fraud-panel__message { font-weight: 600; }
+.fraud-panel__score { margin-top: 6px; }
+.fraud-panel__score span, .fraud-panel__fine { font-size: 0.85rem; color: var(--muted); font-weight: 400; }
+.fraud-panel__fine { margin-top: 8px; }
+.fraud-panel__meta { display: grid; gap: 6px; margin-top: 12px; font-size: 0.9rem; }
+.fraud-panel__meta div { display: flex; justify-content: space-between; gap: 12px; }
+.fraud-panel__meta dt { color: var(--muted); }
+.model-limits { margin: 12px 0 0 18px; font-size: 0.88rem; color: var(--muted); }
+.model-limits li + li { margin-top: 4px; }
+
+/* ---- Fraud-response step: alert / one-time code ---- */
+.alert--warning { color: #8a5a00; background: #fff4dc; }
+.verify { width: 100%; display: flex; flex-direction: column; gap: 14px; text-align: left; margin-top: 6px; }
+.verify h2 { text-align: center; }
+.verify .confirmation__lead { text-align: center; margin-top: -8px; }
+.verify .alert { margin-top: 0; }
+.verify__fine { font-size: 0.85rem; color: var(--muted); }
+.verify .field__input { font-size: 1.4rem; letter-spacing: 0.4em; text-align: center; font-variant-numeric: tabular-nums; }
+.verify form .btn { margin-top: 14px; }
+.verify .form-actions--start .btn { min-width: 0; }
+.timeline { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; font-size: 0.9rem; }
+.timeline li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; background: var(--blue-100); border-radius: 10px; }
+.timeline time { color: var(--muted); white-space: nowrap; }

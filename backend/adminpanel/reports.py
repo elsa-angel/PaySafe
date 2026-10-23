@@ -6,11 +6,15 @@ from datetime import datetime, timezone as dt_timezone
 from decimal import Decimal
 
 from django.db.models import Sum
+from django.utils import timezone
 
 from payments.models import PaymentMethod, Transaction, TransactionStatus
 
 from . import analytics
-from .monitoring import RULES_DISCLAIMER, get_confirmed_fraud_status, get_model_status, rule_based_indicators
+from .monitoring import (
+    RULES_DISCLAIMER, get_confirmed_fraud_status, get_model_status, prediction_statistics, response_statistics,
+    rule_based_indicators,
+)
 from .analytics import earliest_date
 from .params import describe_range, filter_by_date, resolve_buckets
 
@@ -41,7 +45,7 @@ def _filters(params, *names):
         'account_status': ('Account status', lambda v: v.title()),
         'group_by': ('Grouped by', lambda v: v),
     }
-    rows = [['Date range', describe_range(params)]]
+    rows = [['Date range', describe_range(params)], ['Time zone', timezone.get_current_timezone_name()]]
     for name in names:
         if params.get(name):
             label, fmt = labels[name]
@@ -49,6 +53,11 @@ def _filters(params, *names):
         elif name in ('status', 'payment_method', 'account_status'):
             rows.append([labels[name][0], 'All'])
     return rows
+
+
+def _empty_message(count, what):
+    """Shown (and written to the CSV) when the selected period holds no records; every figure is then a real zero."""
+    return None if count else f'No {what} match the selected period and filters. All figures below are zero.'
 
 
 def _section(title, columns, rows):
@@ -93,6 +102,7 @@ def transaction_summary_report(params):
     queryset = _scoped_transactions(params)
     return {
         'filters': _filters(params, 'status', 'payment_method'),
+        'empty_message': _empty_message(queryset.exists(), 'transactions'),
         'notes': [analytics.MONEY_NOTE + ' Counts include every status.'],
         'sections': [
             _section('Summary', ['Metric', 'Value'], _summary_rows(analytics.transaction_summary(queryset))),
@@ -111,6 +121,7 @@ def user_registration_report(params):
     period_stats = analytics.user_summary(in_period)
     return {
         'filters': _filters(params, 'account_status', 'group_by') + [['Grouping used', group_by]],
+        'empty_message': _empty_message(in_period.exists(), 'registrations'),
         'notes': ['Administrator accounts are excluded. No credentials or personal details are included.'],
         'sections': [
             _section('Summary', ['Metric', 'Value'], [
@@ -132,6 +143,7 @@ def transaction_activity_report(params):
     group_by, buckets = resolve_buckets(params, earliest_date(Transaction.objects.all(), 'created_at'))
     return {
         'filters': _filters(params, 'status', 'payment_method', 'group_by') + [['Grouping used', group_by]],
+        'empty_message': _empty_message(queryset.exists(), 'transactions'),
         'notes': [analytics.MONEY_NOTE + ' Counts include every status.'],
         'sections': [
             _section('Summary', ['Metric', 'Value'], _summary_rows(analytics.transaction_summary(queryset))),
@@ -145,8 +157,12 @@ def transaction_activity_report(params):
 
 def fraud_monitoring_report(params):
     queryset = _scoped_transactions(params)
+    group_by, buckets = resolve_buckets(params, earliest_date(Transaction.objects.all(), 'created_at'))
     model, labels = get_model_status(), get_confirmed_fraud_status()
-    indicators = rule_based_indicators(queryset)
+    pred = prediction_statistics(queryset, group_by, buckets)
+    probability = pred['probability']
+    resp = response_statistics(queryset, group_by, buckets)
+    indicators = rule_based_indicators(queryset, baseline_scope=filter_by_date(Transaction.objects.all(), 'created_at', params))
     money = analytics.money_stats(queryset)
     flagged_rows = [
         [rule['name'], t['transaction_id'], t['created_at'].isoformat(), t['sender_email'],
@@ -155,8 +171,10 @@ def fraud_monitoring_report(params):
     ]
     return {
         'filters': _filters(params, 'status', 'payment_method'),
+        'empty_message': _empty_message(queryset.exists(), 'transactions'),
         'notes': [
-            model['message'] + ' This report contains no ML predictions, fraud probabilities or model metrics.',
+            model['message'] + ' Model predictions below come from stored results; unavailable predictions are excluded '
+            'from class and probability figures. No model-quality metrics are reported.',
             labels['message'],
             RULES_DISCLAIMER,
             analytics.MONEY_NOTE,
@@ -164,9 +182,39 @@ def fraud_monitoring_report(params):
         'sections': [
             _section('Fraud detection status', ['Item', 'Status'], [
                 ['XGBoost model', model['status']],
+                ['Model version', _na(model['version'])],
+                ['Evaluable payment methods', ', '.join(model['supported_payment_methods'])],
                 ['Confirmed fraud labels', NOT_AVAILABLE],
-                ['ML predictions / risk scores', NOT_AVAILABLE],
             ]),
+            _section('XGBoost predictions (stored results)', ['Metric', 'Value'], [
+                ['Transactions in selection', pred['total_transactions']],
+                ['Evaluated by the model', pred['evaluated']],
+                ['Prediction unavailable', pred['unavailable']],
+                ['Analysis errors', pred['error']],
+                ['Not evaluated (no analysis recorded)', pred['not_evaluated']],
+                ['Flagged by model (evaluated only)', pred['predicted_classes']['flagged']],
+                ['Not flagged by model (evaluated only)', pred['predicted_classes']['not_flagged']],
+                ['Average model score (evaluated only)', _na(probability['average'])],
+                ['Minimum model score (evaluated only)', _na(probability['minimum'])],
+                ['Maximum model score (evaluated only)', _na(probability['maximum'])],
+            ]),
+            _section('Fraud response (stored workflow records)', ['Metric', 'Value'], [
+                ['Low-risk payments awaiting a one-time code', resp['awaiting']['low_risk_awaiting_otp']],
+                ['High-risk payments awaiting the user\'s decision', resp['awaiting']['high_risk_awaiting_user_decision']],
+                ['High-risk payments awaiting a code after "continue"', resp['awaiting']['high_risk_awaiting_otp_after_continue']],
+                ['Payments blocked: prediction unavailable', resp['awaiting']['prediction_unavailable_blocked']],
+                ['Verified with a one-time code', resp['outcomes']['verified']],
+                ['Cancelled by the user', resp['outcomes']['cancelled_by_user']],
+                ['Verification failed (limits reached)', resp['outcomes']['failed']],
+                ['Verification expired', resp['outcomes']['expired']],
+                ['Invalidated (details changed)', resp['outcomes']['invalidated_details_changed']],
+                ['High-risk alerts e-mailed', resp['high_risk']['alerts_emailed']],
+                ['High-risk alert e-mails that failed', resp['high_risk']['alert_delivery_failed']],
+                ['One-time code e-mails failed', resp['otp']['emails_failed']],
+                ['Incorrect code attempts', resp['otp']['incorrect_attempts']],
+            ]),
+            _section('Unavailable / error reasons', ['Outcome', 'Reason', 'Transactions'],
+                     [[r['status'], r['message'], r['count']] for r in pred['unavailable_by_category']]),
             _section('Transaction activity', ['Metric', 'Value'], [
                 ['Total transactions', queryset.count()],
                 ['Average amount (completed only)', _na(money['average_amount'])],
@@ -199,7 +247,7 @@ def build_report(kind, params):
         'kind': kind,
         'title': REPORT_TITLES[kind],
         'generated_at': datetime.now(dt_timezone.utc),
-        **report,
+        **{'empty_message': None, **report},
     }
 
 
@@ -228,6 +276,8 @@ def report_to_csv(report):
     row('Generated (UTC)', report['generated_at'].strftime('%Y-%m-%d %H:%M:%S'))
     for label, value in report['filters']:
         row(label, value)
+    if report.get('empty_message'):
+        row('Note', report['empty_message'])
     for note in report['notes']:
         row('Note', note)
     for section in report['sections']:

@@ -1,6 +1,7 @@
 import { Link, useParams } from 'react-router-dom'
 import AdminShell from '../../components/admin/AdminShell'
 import { DataState } from '../../components/admin/PageState'
+import FraudAnalysisPanel from '../../components/FraudAnalysisPanel'
 import StatusBadge from '../../components/StatusBadge'
 import { useApi } from '../../hooks/useApi'
 import { adminService } from '../../services/adminService'
@@ -39,13 +40,33 @@ function Details({ txn }) {
     ['Last updated', formatDateTime(txn.updated_at)],
   ]
   if (txn.failure_reason) rows.splice(3, 0, ['Failure reason', txn.failure_reason])
-  if (txn.fraud_analysis) rows.push(['Fraud analysis', txn.fraud_analysis])
 
   return (
     <section className="card card--narrow">
       <dl className="receipt">
         {rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
       </dl>
+      <FraudAnalysisPanel analysis={txn.fraud_analysis_detail} admin />
+      {txn.verification && txn.verification.status !== 'NOT_STARTED' && (
+        <section className="fraud-panel" aria-label="Verification">
+          <div className="fraud-panel__head">
+            <h3>Verification (OTP)</h3>
+            <span className="fraud-panel__badge">{txn.verification.status_label}</span>
+          </div>
+          <p className="fraud-panel__message">{txn.verification.message}</p>
+          {txn.workflow_events?.length > 0 && (
+            <ul className="timeline" aria-label="Workflow events">
+              {txn.workflow_events.map((event, index) => (
+                <li key={`${event.event_type}-${index}`}>
+                  <span>{event.label}{event.detail ? ` (${event.detail})` : ''}</span>
+                  <time dateTime={event.created_at}>{formatDateTime(event.created_at)}</time>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="fraud-panel__fine">One-time codes are never stored or shown; only audit events are listed.</p>
+        </section>
+      )}
     </section>
   )
 }

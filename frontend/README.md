@@ -13,3 +13,11 @@ convenience only; every admin API call is authorised by the server.
 
 Admin pages live in `src/pages/admin/` and reuse the existing PaySafe components and CSS tokens. Charts are
 small dependency-free SVG components in `src/components/admin/Charts.jsx`.
+
+## Tests
+
+```bash
+pnpm test    # vitest + Testing Library: fraud-analysis panel, OTP / high-risk verification flow, admin sections
+pnpm lint
+pnpm build
+```

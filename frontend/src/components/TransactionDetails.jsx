@@ -1,4 +1,5 @@
 import { formatCurrency, formatDateTime } from '../utils/format'
+import FraudAnalysisPanel from './FraudAnalysisPanel'
 import StatusBadge from './StatusBadge'
 
 /** User-facing transaction facts, shared by the success page and the detail page. */
@@ -14,13 +15,16 @@ export default function TransactionDetails({ transaction }) {
   if (transaction.description) rows.splice(4, 0, ['Note', transaction.description])
 
   return (
-    <dl className="receipt">
-      {rows.map(([label, value]) => (
-        <div key={label}>
-          <dt>{label}</dt>
-          <dd>{value}</dd>
-        </div>
-      ))}
-    </dl>
+    <>
+      <dl className="receipt">
+        {rows.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <FraudAnalysisPanel analysis={transaction.fraud_analysis} />
+    </>
   )
 }

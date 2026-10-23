@@ -61,9 +61,10 @@ def compute_history_features(*, user, as_of, recipient_email, payment_method, ex
         average=Avg('amount'),
         maximum=Max('amount'),
         minimum=Min('amount'),
-        same_recipient=Count('pk', filter=Q(recipient_email__iexact=recipient_email)),
+        # a blank recipient is "not provided", never "the same recipient" as other blank ones
+        same_recipient=Count('pk', filter=Q(recipient_email__iexact=recipient_email) & ~Q(recipient_email='')),
         same_method=Count('pk', filter=Q(payment_method=payment_method)),
-        recipients=Count('recipient_email', distinct=True),
+        recipients=Count('recipient_email', distinct=True, filter=~Q(recipient_email='')),
     )
 
     previous = history.order_by('-timestamp', '-id').values('timestamp', 'amount').first()

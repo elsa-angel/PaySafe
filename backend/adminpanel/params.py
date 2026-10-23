@@ -1,6 +1,8 @@
 """Validated query parameters and date-range / time-bucket helpers shared by every admin endpoint."""
-from datetime import date, datetime, time, timedelta, timezone as dt_timezone
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
+from django.utils import timezone
 from rest_framework import serializers
 
 from payments.models import PaymentMethod, TransactionStatus
@@ -25,6 +27,16 @@ class AdminQuerySerializer(serializers.Serializer):
     ordering = serializers.CharField(required=False, max_length=20)
     # Not named "format": DRF reserves ?format= for content negotiation.
     export = serializers.ChoiceField(required=False, choices=['json', 'csv'], default='json')
+    # IANA name of the time zone in which date_from / date_to / buckets are read (the admin's browser zone).
+    # AdminAPIView activates it for the whole request, so every filter and chart bucket uses the same zone.
+    tz = serializers.CharField(required=False, max_length=64)
+
+    def validate_tz(self, value):
+        try:
+            ZoneInfo(value)
+        except (KeyError, ValueError, OSError):
+            raise serializers.ValidationError('Unknown time zone.')
+        return value
 
     def validate(self, attrs):
         start, end = attrs.get('date_from'), attrs.get('date_to')
@@ -43,11 +55,15 @@ def parse_params(request, ordering_choices=None):
 
 
 def _day_start(day):
-    return datetime.combine(day, time.min, tzinfo=dt_timezone.utc)
+    """Midnight at the start of ``day`` in the ACTIVE time zone (UTC unless the request names another)."""
+    return datetime.combine(day, time.min, tzinfo=timezone.get_current_timezone())
 
 
 def filter_by_date(queryset, field, params):
-    """Inclusive date_from / date_to filtering on a datetime column (UTC days)."""
+    """Inclusive date_from / date_to filtering on a datetime column: whole calendar days in the active zone.
+
+    The range is [start of date_from, start of the day after date_to), so a record at 00:00:00 on date_from
+    is included and one at 00:00:00 on the day after date_to is not."""
     if params.get('date_from'):
         queryset = queryset.filter(**{f'{field}__gte': _day_start(params['date_from'])})
     if params.get('date_to'):
@@ -67,7 +83,7 @@ def describe_range(params):
 
 
 def today():
-    return datetime.now(dt_timezone.utc).date()
+    return timezone.localdate()
 
 
 def choose_group_by(params, start, end):

@@ -1,6 +1,10 @@
 .env
+.env.*
+!.env.example
 venv/
 .venv/
+env/
+env312/
 __pycache__/
 *.pyc
 db.sqlite3

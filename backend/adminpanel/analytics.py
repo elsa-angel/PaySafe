@@ -5,12 +5,12 @@ Conventions (shown to admins in the UI):
   * Monetary figures (totals, averages, min/max) include COMPLETED transactions
     only, because those are the ones where the simulated payment went through.
 """
-from datetime import timezone as dt_timezone
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.db.models import Avg, Count, Max, Min, Q, Sum
 from django.db.models.functions import TruncDay, TruncMonth, TruncWeek
+from django.utils import timezone
 
 from payments.models import PaymentMethod, Transaction, TransactionStatus
 
@@ -101,13 +101,13 @@ def method_distribution(queryset):
 
 
 def _bucket_key(value):
-    return value.astimezone(dt_timezone.utc).date()
+    return value.astimezone(timezone.get_current_timezone()).date()
 
 
 def activity_series(queryset, group_by, buckets):
     rows = {
         _bucket_key(row['bucket']): row
-        for row in queryset.annotate(bucket=TRUNC[group_by]('created_at', tzinfo=dt_timezone.utc))
+        for row in queryset.annotate(bucket=TRUNC[group_by]('created_at', tzinfo=timezone.get_current_timezone()))
         .values('bucket')
         .annotate(
             count=Count('pk'),
@@ -130,7 +130,7 @@ def activity_series(queryset, group_by, buckets):
 def registration_series(user_queryset, group_by, buckets):
     rows = {
         _bucket_key(row['bucket']): row['count']
-        for row in user_queryset.annotate(bucket=TRUNC[group_by]('date_joined', tzinfo=dt_timezone.utc))
+        for row in user_queryset.annotate(bucket=TRUNC[group_by]('date_joined', tzinfo=timezone.get_current_timezone()))
         .values('bucket')
         .annotate(count=Count('pk'))
     }

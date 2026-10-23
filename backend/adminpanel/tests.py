@@ -471,18 +471,27 @@ class TransactionManagementTests(AdminTestCase):
 
 class FraudStatisticsTests(AdminTestCase):
     url = '/api/admin/fraud-statistics/'
-    FABRICATED = ('probability', 'accuracy', 'precision', 'recall', 'f1', 'roc', 'auc', 'risk_score', 'prediction', 'fraud_count', 'fraudulent')
+    FABRICATED = ('accuracy', 'precision', 'recall', 'f1', 'roc', 'auc', 'risk_score', 'fraud_count', 'fraudulent')
 
     def rule(self, data, rule_id):
         return next(r for r in data['rule_based']['indicators'] if r['id'] == rule_id)
 
-    def test_reports_ml_not_integrated_and_never_fabricates_fraud_data(self):
+    @override_settings(FRAUD_INR_PER_USD=None)   # explicit: do not depend on a developer's local .env
+    def test_reports_real_model_state_and_never_fabricates_fraud_data(self):
         make_txn(self.alice, status='FAILED')
         data = self.get(self.url).data
-        self.assertFalse(data['ml_model']['integrated'])
-        self.assertEqual((data['ml_model']['model'], data['ml_model']['status']), ('XGBoost', 'Not integrated'))
-        self.assertEqual(data['ml_model']['message'], 'ML fraud detection is not integrated yet.')
+        # No conversion rate is configured in the test settings, so the model honestly reports it cannot run.
+        self.assertTrue(data['ml_model']['integrated'])
+        self.assertFalse(data['ml_model']['ready'])
+        self.assertEqual((data['ml_model']['model'], data['ml_model']['status']), ('XGBoost', 'Not configured'))
+        self.assertEqual(data['ml_model']['supported_payment_methods'], ['CARD'])
         self.assertFalse(data['confirmed_fraud']['available'])
+        # No analysis rows exist: nothing is evaluated and every probability statistic is empty, not zero.
+        pred = data['predictions']
+        self.assertEqual((pred['evaluated'], pred['unavailable'], pred['error']), (0, 0, 0))
+        self.assertEqual(pred['not_evaluated'], pred['total_transactions'])
+        self.assertIsNone(pred['probability']['average'])
+        self.assertIsNone(pred['predicted_classes']['flagged_share'])
         keys = set()
 
         def collect(node):
@@ -600,15 +609,16 @@ class ReportTests(AdminTestCase):
         inactive = self.report('users', account_status='inactive').data
         self.assertEqual(self.value(inactive, 'Total registered users (all time)'), 0)
 
-    def test_fraud_monitoring_report_is_honest_about_missing_ml(self):
+    @override_settings(FRAUD_INR_PER_USD=None)   # explicit: do not depend on a developer's local .env
+    def test_fraud_monitoring_report_is_honest_when_model_cannot_run(self):
         data = self.report('fraud-monitoring').data
         status = dict(self.section(data, 'Fraud detection status')['rows'])
-        self.assertEqual(status['XGBoost model'], 'Not integrated')
+        self.assertEqual(status['XGBoost model'], 'Not configured')
         self.assertEqual(status['Confirmed fraud labels'], 'Not available')
         notes = ' '.join(data['notes'])
-        self.assertIn('ML fraud detection is not integrated yet.', notes)
+        self.assertIn('FRAUD_INR_PER_USD is not set', notes)
         self.assertIn('not confirmed fraud', notes)
-        blob = str(data).lower()
+        blob = str(data['sections']).lower()  # the notes may *name* the metrics to say they are not shown
         for word in ('accuracy', 'precision', 'recall', 'roc', 'f1-score', 'auc'):
             self.assertNotIn(word, blob)
 
